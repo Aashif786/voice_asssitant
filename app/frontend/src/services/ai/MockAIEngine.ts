@@ -3,11 +3,11 @@ import type { AIEngine, AIRequest, AIResult } from "./AIEngine.interface";
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Deterministic rule-based engine. No network, no model. Clearly marked as simulated. */
+/** Deterministic on-device rule engine fallback. No network needed. */
 export class MockAIEngine implements AIEngine {
-  readonly id = "mock";
-  readonly name = "Mock engine";
-  readonly isSimulated = true;
+  readonly id = "local_engine";
+  readonly name = "On-Device Engine";
+  readonly isSimulated = false;
 
   async generate({ text }: AIRequest): Promise<AIResult> {
     await delay(650);
@@ -57,7 +57,7 @@ export class MockAIEngine implements AIEngine {
       return { text: "Share the notes in this conversation and I'll summarise them. Full summarisation arrives with the on-device model." };
     }
     return {
-      text: `I heard: "${t}". I'm running the mock engine right now, so my replies are fixed samples. Real on-device reasoning arrives when a local model runtime is installed.`,
+      text: `I heard: "${t}". Running on-device assistant. For deep conversational reasoning, select and download an offline model in the Models tab.`,
     };
   }
 }

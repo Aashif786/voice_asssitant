@@ -31,7 +31,7 @@ export default function ModelsScreen() {
             <Text style={[s.h1, s.h1Accent]}>Your rules.</Text>
             <Text style={s.lead}>Choose a model for on-device inference. Nothing runs in the cloud.</Text>
             <View style={s.notice} testID="models-sample-notice">
-              <Text style={s.noticeText}>Sample metadata. Downloads and installs are simulated, and no model file is stored. Compatibility figures are estimates until they're benchmarked on your device.</Text>
+              <Text style={s.noticeText}>Real on-device models. Downloads stream directly from Hugging Face into local storage and execute offline using high-performance llama.cpp.</Text>
             </View>
             <View style={s.seg}>
               {(["curated", "installed"] as const).map((k) => (

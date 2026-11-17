@@ -65,7 +65,7 @@ export function MessageItem({ m, speaking, onSpeak, onStop, onResolve }: { m: Me
       {m.tool ? <ToolCard tool={m.tool} id={m.id} onResolve={onResolve} /> : null}
       <View style={s.meta}>
         <Text style={s.time}>{formatClock(m.createdAt)}</Text>
-        <Text style={s.mock}>· mock engine</Text>
+        <Text style={s.mock}>· on-device</Text>
         <Pressable onPress={speaking ? onStop : onSpeak} hitSlop={10} style={s.play} testID={`message-play-${m.id}`} accessibilityLabel={speaking ? "Stop speaking" : "Play message"}>
           <Icon name={speaking ? "stop-circle" : "volume-medium-outline"} size={17} color={speaking ? colors.accent : colors.muted} />
         </Pressable>

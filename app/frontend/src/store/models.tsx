@@ -43,7 +43,10 @@ export function ModelsProvider({ children }: { children: ReactNode }) {
     selected: models.find((m) => m.id === selectedId) ?? null,
     stateOf: (id) => (progress[id] !== undefined ? "downloading" : errors[id] ? "error" : installed.includes(id) ? "installed" : "available"),
     download,
-    remove: (id) => persist(installed.filter((x) => x !== id), selectedId === id ? null : selectedId),
+    remove: (id) => {
+      modelService.delete(id);
+      persist(installed.filter((x) => x !== id), selectedId === id ? null : selectedId);
+    },
     select: (id) => persist(installed, id),
   };
   return <ModelsContext.Provider value={value}>{children}</ModelsContext.Provider>;

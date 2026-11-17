@@ -55,7 +55,7 @@ export default function SettingsScreen() {
         </Section>
 
         <Section title="AI model">
-          <Row icon="hardware-chip-outline" title="Selected model" subtitle={selected ? `${selected.quantization} · ${selected.params}` : "Mock engine active · no model selected"} value={selected?.name.split(" ").slice(0, 3).join(" ")} onPress={() => router.push("/models")} testID="settings-model" />
+          <Row icon="hardware-chip-outline" title="Selected model" subtitle={selected ? `${selected.quantization} · ${selected.params}` : "No model selected · Tap to choose"} value={selected?.name.split(" ").slice(0, 3).join(" ")} onPress={() => router.push("/models")} testID="settings-model" />
           <Row icon="thermometer-outline" title="Temperature" value={String(settings.temperature)} status="planned" onPress={() => pick("temperature", "Temperature", [0.2, 0.5, 0.7, 1].map((v) => ({ label: String(v), value: v })))} testID="settings-temperature" />
           <Row icon="layers-outline" title="Context length" value={`${settings.contextLength}`} status="planned" onPress={() => pick("contextLength", "Context length", [1024, 2048, 4096].map((v) => ({ label: `${v} tokens`, value: v })))} last testID="settings-context" />
         </Section>

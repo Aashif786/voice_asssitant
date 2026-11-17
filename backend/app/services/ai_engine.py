@@ -1,8 +1,12 @@
 import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from backend.app.config import GEMINI_API_KEY
+
+from backend.app.config import GEMINI_API_KEY, MODELS_DIR
 from backend.app.models.schemas import Message, ToolCall
+from backend.app.services.local_llm import local_llm
+from backend.app.services.model_service import model_manager
 
 class AIEngine:
     def __init__(self):
@@ -118,7 +122,40 @@ class AIEngine:
                 )
                 return (tool_out["message"], tool_call)
 
-        # Step 2: Try Cloud/Online LLM if configured
+        # Step 2: Try Local Offline LLM Execution (real GGUF model via llama.cpp)
+        selected_id = model_manager.selected_model_id
+        if selected_id:
+            model_file = MODELS_DIR / f"{selected_id}.gguf"
+            if model_file.exists():
+                # Ensure server is running for this model
+                server_ok = local_llm.ensure_server(selected_id, model_file)
+                if server_ok:
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a concise, helpful offline on-device AI voice assistant. "
+                                "Provide clear, direct answers without unnecessary fluff."
+                            )
+                        }
+                    ]
+                    for m in history[-6:]:
+                        r = "assistant" if m.role == "assistant" else "user"
+                        messages.append({"role": r, "content": m.content})
+                    messages.append({"role": "user", "content": t})
+
+                    try:
+                        reply = await local_llm.chat_completion(
+                            messages=messages,
+                            temperature=temperature,
+                            max_tokens=256
+                        )
+                        if reply:
+                            return (reply, None)
+                    except Exception:
+                        pass
+
+        # Step 3: Try Cloud LLM if configured and local model not active
         if self.gemini_client:
             try:
                 prompt_parts = []
@@ -133,25 +170,23 @@ class AIEngine:
                 )
                 if response and response.text:
                     return (response.text.strip(), None)
-            except Exception as e:
-                # Fallback to local intelligent assistant logic
+            except Exception:
                 pass
 
-        # Step 3: Local Offline Intelligent Assistant Engine
-        # Rich contextual responses based on intent & query analysis
+        # Step 4: Fallback Intelligent On-Device Logic
         l = t.lower()
 
         if re.search(r"^(hi|hello|hey|greetings|good morning|good evening|good afternoon)\b", l):
             return (
                 "Hello! I am your offline voice assistant, running directly on your device. "
-                "I can set reminders, check your schedule, draft messages, search files, and answer your questions without sending your data to the cloud. What can I do for you?",
+                "I can set reminders, check your schedule, draft messages, search files, and answer questions. What can I do for you?",
                 None
             )
 
         if "who are you" in l or "what are you" in l:
             return (
                 "I am an on-device Voice AI Assistant designed to operate privately and offline. "
-                "All conversation processing, audio handling, and storage happen locally on your system.",
+                "All conversation processing, audio handling, and model execution happen locally on your system.",
                 None
             )
 
@@ -168,37 +203,10 @@ class AIEngine:
                 None
             )
 
-        if "explain" in l:
-            topic = re.sub(r"^explain\s+(?:to me\s+)?(?:about\s+)?", "", t, flags=re.IGNORECASE).rstrip("?.")
-            return (
-                f"Here is an overview of {topic}:\n\n"
-                f"1. Core Concept: {topic.capitalize()} represents a foundational mechanism designed to solve complex constraints efficiently.\n"
-                f"2. Practical Application: In everyday systems, it is utilized to optimize performance, simplify architectures, and provide predictable outcomes.\n"
-                f"3. Key Takeaway: Implementing {topic} properly requires balancing trade-offs between memory footprint, execution speed, and simplicity.",
-                None
-            )
-
-        if "plan" in l or "routine" in l:
-            return (
-                "Here is an efficient daily productivity plan:\n"
-                "1. Morning Deep Work (9:00 - 11:30): Focus on your highest-leverage task without interruptions.\n"
-                "2. Midday Sync & Communications (11:30 - 1:00): Review messages, attend syncs, and clear notifications.\n"
-                "3. Afternoon Execution (2:00 - 4:30): Complete iterative tasks, code reviews, and project testing.\n"
-                "4. End-of-Day Wrap-Up (4:30 - 5:00): Review accomplishments and queue top priorities for tomorrow.",
-                None
-            )
-
-        if "summarize" in l or "summary" in l:
-            if history:
-                last_messages = [m.content for m in history[-3:] if m.role == "user"]
-                if last_messages:
-                    return (f"Summary of our recent discussion:\n• " + "\n• ".join(last_messages), None)
-            return ("Provide the text or discussion points you'd like me to summarize, and I will break it down into key bullet points.", None)
-
-        # Default helpful AI reasoning response
+        # General helpful on-device response
         return (
-            f"Understood. Regarding \"{t}\": I am processing this on your local offline engine. "
-            "Your request has been logged in your local conversation history. Let me know if you would like me to set a reminder, look up your calendar, or search files related to this.",
+            f"I processed your query: \"{t}\". To get full conversational reasoning offline, "
+            f"make sure a local model is downloaded and selected in the Models tab.",
             None
         )
 

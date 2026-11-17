@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from backend.app.models.schemas import ModelInfo, ModelStateResponse
 from backend.app.services.model_service import model_manager
 
@@ -12,6 +12,10 @@ async def get_catalogue():
 @router.get("/state", response_model=ModelStateResponse)
 async def get_model_state():
     return model_manager.get_state()
+
+@router.get("/progress/{model_id}")
+async def get_model_progress(model_id: str):
+    return model_manager.get_progress(model_id)
 
 @router.post("/download/{model_id}")
 async def download_model(model_id: str):

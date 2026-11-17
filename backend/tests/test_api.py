@@ -115,6 +115,11 @@ def test_models_lifecycle():
     dl_res = client.post(f"/api/models/download/{target_id}")
     assert dl_res.status_code == 200
 
+    # 2b. Progress check
+    prog_res = client.get(f"/api/models/progress/{target_id}")
+    assert prog_res.status_code == 200
+    assert prog_res.json()["status"] in ["completed", "downloading", "installed"]
+
     # 3. State check
     state_res = client.get("/api/models/state")
     assert state_res.status_code == 200
