@@ -1,121 +1,320 @@
-# Offline Voice AI Assistant
+# 🎙️ Offline Voice AI Assistant
 
-A privacy-first, **on-device** voice assistant. Speech recognition (Whisper), language
-reasoning (llama.cpp), and text-to-speech all run **on the phone** — no audio or
-conversation ever leaves the device. An optional companion backend exists for desktop/LAN
-use, but the mobile app is fully self-contained.
+A privacy-first, intelligent voice assistant that runs **on-device** with offline speech recognition (Whisper), local language reasoning (llama.cpp / GGUF), offline tools, and text-to-speech.
 
-- **App:** Expo / React Native (TypeScript), `app/frontend`
-- **Optional backend:** FastAPI (Python), `backend` — not required by the mobile app
+The project features a **hybrid architecture**:
+1. **100% Offline On-Device Mode**: Runs fully on mobile hardware via custom native C++ TurboModules (`whisper.rn` and `llama.rn`) with zero network dependency.
+2. **Companion Backend / Development Mode**: Connects the mobile app (or browser) to a local Python FastAPI backend running local Whisper STT and `llama.cpp` inference for fast testing in **Expo Go**, **Web**, or over the **Local Network (LAN)**.
 
 ---
 
-## Architecture (on-device)
-
-```
- Mic ──▶ whisper.rn (Whisper, on-device STT) ──▶ text
-                                                  │
-                                       tool intent?│
-                        ┌─────────────────────────┴───────────────┐
-                        ▼                                          ▼
-          Tool (time, reminder, calendar,             llama.rn (llama.cpp, on-device LLM)
-          draft, file/web search)                                  │
-                        └─────────────────────────┬────────────────┘
-                                                   ▼
-                                     expo-speech (on-device TTS) ──▶ Speaker
-```
-
-- **STT:** `whisper.rn` (whisper.cpp) with a locally downloaded GGML model.
-- **LLM:** `llama.rn` (llama.cpp) running a downloaded GGUF model.
-- **Tools:** detected offline (`src/services/ai/toolIntent.ts`) and executed on-device.
-- **Fallback:** if no model is loaded, a deterministic rule engine answers and prompts the
-  user to install a model. If `EXPO_PUBLIC_BACKEND_URL` is set, the optional backend is
-  used as a secondary generator.
-
-> **Important:** `llama.rn` and `whisper.rn` are native modules. They do **not** run in
-> Expo Go or on web — you must create a **development build** (EAS or local prebuild).
+## 📑 Table of Contents
+- [Architecture](#-architecture)
+- [Project Structure](#-project-structure)
+- [Prerequisites & Quick Setup](#-prerequisites--quick-setup)
+- [Starting the Companion Backend](#-starting-the-companion-backend)
+- [Starting the Frontend (All Methods)](#-starting-the-frontend-all-methods)
+  - [Method 1: Web Browser (Fastest PC Testing)](#method-1-web-browser-fastest-pc-testing)
+  - [Method 2: Local Network (LAN) with Expo Go on Phone](#method-2-local-network-lan-with-expo-go-on-phone)
+  - [Method 3: Tunnel Mode (Different Wi-Fi / Cellular Data)](#method-3-tunnel-mode-different-wi-fi--cellular-data)
+  - [Method 4: Android Emulator / iOS Simulator](#method-4-android-emulator--ios-simulator)
+  - [Method 5: Custom Development Build (100% Offline Native AI)](#method-5-custom-development-build-100-offline-native-ai)
+- [Offline Tool Execution](#-offline-tool-execution)
+- [Troubleshooting & FAQs](#-troubleshooting--faqs)
+- [Testing & Quality Assurance](#-testing--quality-assurance)
 
 ---
 
-## Prerequisites
+## 🏛️ Architecture
 
-- Node 18+ and Yarn
-- For device builds: an Expo account + EAS CLI (`npm i -g eas-cli`), and Android Studio
-  (Android) or Xcode (iOS)
+```
+                  ┌─────────────────────────────────────────────────┐
+                  │                 User Voice / Mic                │
+                  └────────────────────────┬────────────────────────┘
+                                           │
+         ┌─────────────────────────────────┴─────────────────────────────────┐
+         ▼ (Mode 1: Dev Build / Native)                                      ▼ (Mode 2: Expo Go / Web / LAN)
+   whisper.rn (whisper.cpp)                                         Browser Web Speech API  OR
+   (141 MB ggml-base.en model)                                      Audio Upload ➔ POST /api/voice/transcribe
+         │                                                                   │
+         └─────────────────────────────────┬─────────────────────────────────┘
+                                           ▼
+                                    Transcribed Text
+                                           │
+                                           ▼
+                       ┌───────────────────────────────────────┐
+                       │   Agent Orchestrator (Intent Engine)  │
+                       └───────────────────┬───────────────────┘
+                                           │
+                    ┌──────────────────────┴──────────────────────┐
+                    ▼                                             ▼
+          Offline Tool Detected?                      Conversational Generation
+    (Time, Reminder, Calendar, Notes,                             │
+     File Search, Calculator, Web)                                │
+                    │                               ┌─────────────┴─────────────┐
+                    ▼                               ▼                           ▼
+          Execute Locally via                On-Device LLM              Companion Backend
+             ToolRegistry                 (llama.rn GGUF)           (llama-server / Gemini)
+                    │                               │                           │
+                    └──────────────────────┬────────┴───────────────────────────┘
+                                           ▼
+                                     Assistant Text
+                                           │
+                                           ▼
+                                expo-speech (System TTS)
+                                           │
+                                           ▼
+                                     Device Speaker
+```
 
-## Install
+---
 
+## 📁 Project Structure
+
+```
+voice_asssitant/
+├── app/
+│   └── frontend/              # Expo / React Native TypeScript mobile & web app
+│       ├── app/               # Expo Router screens ((tabs), conversation, diagnostics, models)
+│       ├── src/
+│       │   ├── components/    # VoiceOrb, MicSheet, Composer, ModelRow UI components
+│       │   ├── hooks/         # useConversation, useVoiceInput, useMicPermission
+│       │   ├── services/      # Voice, Native inference bridges, Models, Tools, Agent
+│       │   └── store/         # React Context stores for models and settings
+│       ├── .env               # Frontend environment config (backend URL)
+│       └── package.json
+├── backend/                   # FastAPI Python companion backend
+│   ├── app/
+│   │   ├── routers/           # chat.py, models.py, tools.py, voice.py, diagnostics.py
+│   │   ├── services/          # ai_engine.py, local_llm.py, model_service.py, database.py
+│   │   └── config.py
+│   ├── tests/                 # Pytest test suite (10 integration tests)
+│   ├── run.py                 # Backend server entry point (port 8000)
+│   └── requirements.txt
+└── README.md
+```
+
+---
+
+## ⚙️ Prerequisites & Quick Setup
+
+### 1. Requirements
+* **Node.js**: v18+ and **Yarn** (`npm i -g yarn`)
+* **Python**: v3.10+ and `pip`
+* **Expo Go App** (optional): Installed on your iOS or Android phone from App Store / Google Play
+
+### 2. Install Dependencies
+
+#### Backend:
+```bash
+cd backend
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS / Linux:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+#### Frontend:
 ```bash
 cd app/frontend
 yarn install
-# Ensures the native modules match the installed Expo SDK:
-npx expo install llama.rn whisper.rn
-```
-
-## Run (development build — required for voice/LLM)
-
-Because the app uses native modules, run a dev build rather than Expo Go:
-
-```bash
-# Build & install a dev client on a connected device/emulator:
-eas build --profile development --platform android   # or ios
-# ...then start the bundler:
-npx expo start --dev-client
-```
-
-Local alternative (no EAS):
-
-```bash
-npx expo prebuild
-npx expo run:android   # or: npx expo run:ios
-```
-
-### First run
-1. Open **Models** → download a GGUF model (start with **SmolLM2 135M** or **Qwen 2.5 0.5B**
-   on low-RAM devices; **Llama 3.2 1B/3B** for better quality).
-2. Tap the mic → grant microphone permission → the app downloads the Whisper speech model
-   once (~141 MB), then transcribes on-device.
-3. Speak. The transcript is answered by the on-device LLM and read back with TTS.
-
-## Optional companion backend
-
-Only needed if you want a desktop/LAN server (e.g. to run larger models on a PC). The
-mobile app does **not** require it.
-
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python run.py            # serves http://0.0.0.0:8000
-```
-
-Point the app at it by setting `EXPO_PUBLIC_BACKEND_URL` (e.g. in `app/frontend/.env`).
-Backend config is via env vars — see `backend/.env.example`. The backend's own STT is
-offline when `faster-whisper` is installed (otherwise it falls back to an online engine
-and reports that honestly at `/api/voice/status`).
-
-Run backend tests:
-
-```bash
-VA_DATA_DIR=/tmp/va pytest backend/tests -q   # VA_DATA_DIR avoids writing into the repo
 ```
 
 ---
 
-## Status
+## 🚀 Starting the Companion Backend
 
-| Capability | Status |
-|------------|--------|
-| On-device STT (Whisper) | Implemented — needs a dev build + one-time model download |
-| On-device LLM (llama.cpp) | Implemented — needs a downloaded GGUF model |
-| On-device TTS | Implemented (native) |
-| Tools: time, reminder, calendar, draft, file/web search | Implemented |
-| Wake-word ("Hey Assistant") | Planned — needs a native wake engine + Android foreground service |
+The backend provides the local model manager, Whisper speech-to-text API, database storage, and local `llama.cpp` inference.
 
-## Notes for maintainers
+In your terminal (from project root):
 
-- Large binaries and model files are git-ignored (`backend/bin/`, `*.gguf`, `*.bin`,
-  `*.db`). Don't commit them — models download at runtime; ship llama.cpp binaries via a
-  release artifact or Git LFS if the desktop backend is distributed.
-- `backend/tests/test_api.py::test_models_lifecycle` downloads a real model and needs
-  network; deselect it in offline CI.
+```powershell
+python backend/run.py
+```
+
+* **Server Address**: `http://0.0.0.0:8000` (accessible from `localhost` and your LAN IP).
+* **Interactive API Docs (Swagger UI)**: Open `http://localhost:8000/docs` in your browser.
+* *(Optional)* Set `GEMINI_API_KEY="your-key"` in `backend/.env` if you wish to enable online fallback when no local model is loaded.
+
+---
+
+## 📱 Starting the Frontend (All Methods)
+
+Navigate to the frontend directory before running any frontend commands:
+```powershell
+cd app/frontend
+```
+
+---
+
+### Method 1: Web Browser (Fastest PC Testing)
+
+Runs the application directly in your web browser (Chrome, Edge, Brave, Safari).
+
+```powershell
+npx expo start --web
+```
+* **URL**: `http://localhost:8081`
+* **Backend Connection**: Connects automatically to `http://localhost:8000`.
+* **Voice**: Uses the browser's native **Web Speech API** for real-time speech recognition.
+
+---
+
+### Method 2: Local Network (LAN) with Expo Go on Phone
+
+Allows you to run the app directly on your physical Android or iPhone device over Wi-Fi without compiling native code.
+
+#### Step 1: Find your Computer's Local IP Address
+* **Windows (PowerShell)**:
+  ```powershell
+  ipconfig
+  # Look for "IPv4 Address", e.g., 192.168.1.99
+  ```
+* **macOS / Linux**:
+  ```bash
+  ifconfig | grep "inet "
+  # or: ip a
+  ```
+
+#### Step 2: Configure `app/frontend/.env`
+Create or update `app/frontend/.env` with your computer's IP:
+```env
+EXPO_PUBLIC_BACKEND_URL=http://192.168.1.99:8000
+```
+*(Replace `192.168.1.99` with your computer's actual IPv4 address).*
+
+#### Step 3: Start Expo in LAN Mode
+Ensure your phone and PC are connected to the **same Wi-Fi network**, then run:
+```powershell
+npx expo start --lan
+```
+
+#### Step 4: Open in Expo Go
+* **Android**: Open the **Expo Go** app and tap **Scan QR Code**.
+* **iOS**: Open the native **Camera app** and scan the QR code to open in Expo Go.
+
+---
+
+### Method 3: Tunnel Mode (Different Wi-Fi / Cellular Data)
+
+If your PC and phone are on different Wi-Fi networks, you are on a restricted university/office network, or testing over 4G/5G mobile data:
+
+```powershell
+npx expo start --tunnel
+```
+* Uses secure cloud tunneling (Ngrok) to route your Metro bundle directly to your phone.
+* Works regardless of router firewall rules or subnet mismatches.
+
+---
+
+### Method 4: Android Emulator / iOS Simulator
+
+#### Android Emulator:
+1. Start your Android Emulator in Android Studio.
+2. If connecting to the companion backend, Android Emulators use `http://10.0.2.2:8000` to refer to the host PC:
+   ```env
+   EXPO_PUBLIC_BACKEND_URL=http://10.0.2.2:8000
+   ```
+3. Run:
+   ```powershell
+   npx expo start --android
+   ```
+
+#### iOS Simulator (macOS only):
+```bash
+npx expo start --ios
+```
+
+---
+
+### Method 5: Custom Development Build (100% Offline Native AI)
+
+Standard Expo Go cannot load custom C++ TurboModules (`whisper.rn` and `llama.rn`). If you want **100% on-device offline inference** without a backend:
+
+#### Option A: Local Build with Android Studio & NDK
+```powershell
+cd app/frontend
+
+# 1. Generate native android / ios directories
+npx expo prebuild
+
+# 2. Compile and install on plugged-in device / emulator
+npx expo run:android     # or: npx expo run:ios
+
+# 3. Start the bundler for your dev client
+npx expo start --dev-client
+```
+
+#### Option B: Cloud Build with Expo Application Services (EAS)
+```powershell
+cd app/frontend
+npm install -g eas-cli
+eas login
+eas build --profile development --platform android
+```
+Download the resulting `.apk`, install it on your device, and run `npx expo start --dev-client`.
+
+---
+
+## 🛠️ Offline Tool Execution
+
+The assistant includes an intent detection engine that executes offline tools without requiring an LLM response:
+
+| Tool | Voice / Text Query Examples | Behavior |
+| :--- | :--- | :--- |
+| **Clock** | *"What time is it?"*, *"Tell me the date"* | Instant device time check |
+| **Reminder** | *"Remind me to buy milk tonight at 8 PM"* | Staged with confirmation, saves to SQLite |
+| **Calendar** | *"What's on my schedule for today?"*, *"Tomorrow's agenda"* | Reads local agenda and events |
+| **WhatsApp Draft**| *"Draft a message to Alex saying I am on my way"* | Prepares direct WhatsApp message link |
+| **File Search** | *"Search files for report.pdf"*, *"Find document notes"* | Indexed local workspace file search |
+| **Web Search** | *"Search the web for quantum computing"* | Online search with confirmation |
+
+---
+
+## 🔍 Troubleshooting & FAQs
+
+### Q1: Expo Go says "Speech recognition is unavailable"
+* **Solution**: Ensure your companion backend is running (`python backend/run.py`) and `app/frontend/.env` has `EXPO_PUBLIC_BACKEND_URL=http://<YOUR_IP>:8000`. When connected, the app uses the backend Whisper engine. For pure on-device Whisper, use **Method 5** (Development Build).
+
+### Q2: Network request failed / Cannot connect to backend from phone
+1. Verify both your phone and PC are on the **exact same Wi-Fi connection**.
+2. Make sure Windows Defender / Firewall allows incoming connections on port `8000`:
+   ```powershell
+   # Run in Admin PowerShell to permit port 8000:
+   New-NetFirewallRule -DisplayName "VoiceAssistantBackend" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
+   ```
+3. Test your backend from your phone's browser: open `http://<YOUR_PC_IP>:8000/api/voice/status`. It should return `{"status": "ready"}`.
+
+### Q3: Clearing Metro Cache
+If Metro gets stuck or exhibits stale module errors:
+```powershell
+npx expo start -c
+```
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+### Run Backend Test Suite (Pytest)
+```powershell
+python -m pytest backend/tests -v
+```
+*(Runs 10 automated tests covering health checks, tools, confirmation flows, model downloads, and diagnostics).*
+
+### Run Frontend Typecheck
+```powershell
+yarn --cwd app/frontend tsc --noEmit
+```
+
+### Run Frontend Linter (ESLint)
+```powershell
+yarn --cwd app/frontend lint
+```
+
+---
+
+## 📄 License
+This project is open-source and available under the [MIT License](LICENSE).
