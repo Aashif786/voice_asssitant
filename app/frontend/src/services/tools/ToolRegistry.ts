@@ -1,4 +1,3 @@
-import { Linking } from "react-native";
 import type { CapabilityMode, ImplementationStatus, ToolName, ToolStatus } from "@/src/types";
 import { apiRequest } from "@/src/services/api";
 

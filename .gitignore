@@ -128,3 +128,8 @@ $RECYCLE.BIN/
 *.swp
 *.swo
 *~
+backend/bin/
+*.gguf
+*.bin
+backend/data/assistant.db
+backend/.env

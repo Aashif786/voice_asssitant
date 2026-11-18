@@ -18,7 +18,7 @@ import type { AssistantState } from "@/src/types";
 const STATE_LABEL: Partial<Record<AssistantState, string>> = {
   processing: "Thinking on-device…",
   executing: "Running action…",
-  speaking: "Speaking · simulated, no audio",
+  speaking: "Speaking…",
   error: "Something went wrong. Try again.",
 };
 const STARTERS = ["Summarize notes", "Plan my day", "Set reminder", "Draft reply"];
@@ -101,7 +101,7 @@ export default function ConversationScreen() {
           <Composer ref={inputRef} value={text} onChangeText={setText} onSend={submit} onMic={() => setMic(true)} placeholder="Ask me anything…" disabled={c.state === "processing" || c.state === "executing"} />
         </View>
       </KeyboardAvoidingView>
-      <MicSheet visible={mic} onClose={() => setMic(false)} onUseKeyboard={() => setTimeout(() => inputRef.current?.focus(), 300)} />
+      <MicSheet visible={mic} onClose={() => setMic(false)} onUseKeyboard={() => setTimeout(() => inputRef.current?.focus(), 300)} onResult={(t) => c.send(t)} />
     </View>
   );
 }

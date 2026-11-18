@@ -8,6 +8,7 @@ from backend.app.config import DATA_DIR
 from backend.app.models.schemas import SystemDiagnosticsResponse
 from backend.app.services.database import get_installed_model_ids
 from backend.app.services.model_service import model_manager
+from backend.app.services.whisper_stt import stt_service
 
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 
@@ -30,7 +31,7 @@ async def get_system_diagnostics():
         memoryAvailableGB=avail_mem_gb,
         storageFreeGB=free_storage_gb,
         storageTotalGB=total_storage_gb,
-        whisperAvailable=True,
+        whisperAvailable=stt_service.offline_available,
         pythonVersion=sys.version.split()[0],
         activeModel=model_manager.selected_model_id,
         installedModelsCount=len(installed_ids)

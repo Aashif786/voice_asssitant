@@ -1,6 +1,7 @@
 import os
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -8,7 +9,8 @@ import httpx
 from backend.app.config import BASE_DIR, MODELS_DIR
 
 BIN_DIR = BASE_DIR / "bin"
-LLAMA_SERVER_BIN = BIN_DIR / "llama-server.exe"
+IS_WINDOWS = sys.platform.startswith("win")
+LLAMA_SERVER_BIN = BIN_DIR / ("llama-server.exe" if IS_WINDOWS else "llama-server")
 
 class LocalLLMManager:
     """
@@ -27,16 +29,30 @@ class LocalLLMManager:
         if self.is_binary_available():
             return True
         try:
+            import io
+            import platform
             import urllib.request
             import zipfile
-            import io
             BIN_DIR.mkdir(parents=True, exist_ok=True)
-            url = "https://github.com/ggml-org/llama.cpp/releases/download/b12470/llama-b12470-bin-win-cpu-x64.zip"
+
+            machine = platform.machine().lower()
+            if IS_WINDOWS:
+                asset = "llama-b12470-bin-win-cpu-x64.zip"
+            elif sys.platform.startswith("darwin"):
+                asset = "llama-b12470-bin-macos-arm64.zip" if ("arm" in machine or "aarch64" in machine) else "llama-b12470-bin-macos-x64.zip"
+            else:
+                asset = "llama-b12470-bin-ubuntu-x64.zip"
+
+            url = f"https://github.com/ggml-org/llama.cpp/releases/download/b12470/{asset}"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = resp.read()
                 with zipfile.ZipFile(io.BytesIO(data)) as z:
                     z.extractall(BIN_DIR)
+
+            if not IS_WINDOWS and LLAMA_SERVER_BIN.exists():
+                LLAMA_SERVER_BIN.chmod(0o755)
+
             return self.is_binary_available()
         except Exception:
             return False

@@ -49,9 +49,9 @@ export default function SettingsScreen() {
 
         <Section title="Voice">
           <Row icon="language-outline" title="Recognition language" value={settings.language} status="planned" onPress={() => pick("language", "Recognition language", ["English (US)", "English (India)", "Hindi", "Spanish", "German"].map((l) => ({ label: l, value: l })))} testID="settings-language" />
-          <Row icon="person-outline" title="Assistant voice" value={settings.voice} status="simulated" onPress={() => pick("voice", "Assistant voice", ["Aria · neutral", "Leo · warm", "Nova · bright"].map((l) => ({ label: l, value: l, note: "Sample voice, applies when offline TTS is installed" })))} testID="settings-voice" />
+          <Row icon="person-outline" title="Assistant voice" value={settings.voice} onPress={() => pick("voice", "Assistant voice", ["Aria · neutral", "Leo · warm", "Nova · bright"].map((l) => ({ label: l, value: l, note: "Uses your device's text-to-speech voice" })))} testID="settings-voice" />
           <Row icon="speedometer-outline" title="Speech speed" value={`${settings.speechRate}×`} onPress={() => pick("speechRate", "Speech speed", [0.75, 1, 1.25, 1.5].map((v) => ({ label: `${v}×`, value: v })))} testID="settings-speech-rate" />
-          <Row icon="volume-high-outline" title="Auto-play responses" subtitle="Playback is simulated until TTS lands" switchValue={settings.autoPlayback} onSwitch={(v) => update({ autoPlayback: v })} last testID="settings-auto-playback" />
+          <Row icon="volume-high-outline" title="Auto-play responses" subtitle="Speak replies aloud using on-device TTS" switchValue={settings.autoPlayback} onSwitch={(v) => update({ autoPlayback: v })} last testID="settings-auto-playback" />
         </Section>
 
         <Section title="AI model">

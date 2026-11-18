@@ -1,63 +1,52 @@
 import type { AIEngine, AIRequest, AIResult } from "./AIEngine.interface";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Deterministic on-device rule engine fallback. No network needed. */
-export class MockAIEngine implements AIEngine {
-  readonly id = "local_engine";
-  readonly name = "On-Device Engine";
-  readonly isSimulated = false;
+/**
+ * Deterministic offline fallback used only when no on-device model is loaded (and no
+ * optional backend is reachable). It never pretends to reason — it gives honest, useful
+ * guidance and points the user to install a model. Tool phrases are handled upstream by
+ * the orchestrator, so this only produces conversational text.
+ */
+class RuleFallbackEngine implements AIEngine {
+  readonly id = "rule_fallback";
+  readonly name = "On-device rules (no model loaded)";
+  readonly isSimulated = true;
+
+  isReady(): boolean {
+    return true;
+  }
+
+  async ensureReady(): Promise<boolean> {
+    return true;
+  }
 
   async generate({ text }: AIRequest): Promise<AIResult> {
-    await delay(650);
+    await delay(250);
     const t = text.trim().replace(/^(hey|ok|okay)\s+assistant[,\s]*/i, "");
     const l = t.toLowerCase();
 
-    if (/\b(what time|the time|what's the date|what day)\b/.test(l)) {
-      return { text: "", toolRequest: { tool: "get_time", params: {} } };
+    if (/^(hi|hello|hey|good (morning|afternoon|evening))\b/.test(l)) {
+      return { text: "Hello. I'm running fully on this device. Install a model in the Models tab and I can hold a full conversation offline." };
     }
-    const remind = t.match(/remind me (?:to )?(.+?)(?:\s+(?:at|by|on|tomorrow|tonight|in)\s+(.+))?$/i);
-    if (remind) {
+    if (/who are you|what are you/.test(l)) {
+      return { text: "I'm an on-device voice assistant. Speech, reasoning and tools run locally so nothing leaves your device." };
+    }
+    if (/what can you do|help\b/.test(l)) {
       return {
-        text: "Here's the reminder I'd set. Confirm to continue.",
-        toolRequest: { tool: "create_reminder", params: { task: cap(remind[1]), time: remind[2] ?? "Not specified" } },
+        text:
+          "I can check the time, set reminders, read your calendar, draft messages, search files, and (online) search the web. " +
+          "Download an on-device model in the Models tab to unlock full conversation.",
       };
-    }
-    const msg = l.match(/(?:whatsapp|message|text|reply).*?(?:for|to)\s+([a-z]+)/i);
-    if (msg) {
-      const name = cap(msg[1]);
-      return {
-        text: `I've prepared a draft for ${name}. Review it before anything leaves your device.`,
-        toolRequest: { tool: "draft_message", params: { recipient: name, body: `Hi ${name}, just checking in. Let me know when you're free to talk.` } },
-      };
-    }
-    if (/\b(calendar|schedule|meetings?|agenda)\b/.test(l)) {
-      return { text: "", toolRequest: { tool: "read_calendar", params: { range: "today" } } };
-    }
-    if (/\b(files?|downloads?|downloaded|documents?)\b/.test(l)) {
-      return { text: "", toolRequest: { tool: "search_files", params: { query: t } } };
-    }
-    if (/\b(search|look up|google)\b/.test(l)) {
-      return { text: "Searching the web needs an internet connection. Confirm if you want to go online.", toolRequest: { tool: "web_search", params: { query: t } } };
-    }
-    if (/^(hi|hello|hey)\b/.test(l)) {
-      return { text: "Hello. I'm here and running fully on this device. What would you like to do?" };
-    }
-    const explain = t.match(/explain (?:to me )?(.+)/i);
-    if (explain) {
-      return {
-        text: `Here's a short take on ${explain[1].replace(/[?.]$/, "")}: start with the core idea, then one concrete example, then where it breaks down. Once a local model is installed I'll give you a full explanation, without sending anything off your device.`,
-      };
-    }
-    if (/plan my day/.test(l)) {
-      return { text: "A simple plan: pick one important task for the morning, batch messages before lunch, and leave the late afternoon for reviews. When calendar access is connected I'll build this from your real schedule." };
-    }
-    if (/summari[sz]e/.test(l)) {
-      return { text: "Share the notes in this conversation and I'll summarise them. Full summarisation arrives with the on-device model." };
     }
     return {
-      text: `I heard: "${t}". Running on-device assistant. For deep conversational reasoning, select and download an offline model in the Models tab.`,
+      text: `I heard: "${t}". To answer this fully offline, download and select a model in the Models tab — then I'll reason on-device.`,
     };
   }
+
+  async unload(): Promise<void> {
+    /* nothing to release */
+  }
 }
+
+export const ruleEngine: AIEngine = new RuleFallbackEngine();

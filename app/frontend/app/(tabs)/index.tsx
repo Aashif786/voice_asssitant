@@ -11,7 +11,6 @@ import { MicSheet } from "@/src/components/assistant/MicSheet";
 import { VoiceOrb } from "@/src/components/assistant/VoiceOrb";
 import { Icon } from "@/src/components/common/Icon";
 import { usesNativeTabs } from "@/src/navigation";
-import { aiEngine } from "@/src/services/agent/AgentOrchestrator";
 import { conversationRepository } from "@/src/services/storage/SQLiteService";
 import { wakeWordEngine } from "@/src/services/voice";
 import { useModels } from "@/src/store/models";
@@ -60,8 +59,8 @@ export default function AssistantHome() {
       <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <View style={[s.top, { paddingTop: insets.top + 12 }]}>
           <View style={s.status} testID="assistant-status">
-            <View style={[s.dot, { backgroundColor: aiEngine.isSimulated ? colors.warning : colors.success }]} />
-            <Text style={s.statusText}>Ready · {selected ? selected.name.split(" ").slice(0, 3).join(" ") : aiEngine.name}</Text>
+            <View style={[s.dot, { backgroundColor: selected ? colors.success : colors.warning }]} />
+            <Text style={s.statusText}>{selected ? `Ready · ${selected.name.split(" ").slice(0, 3).join(" ")}` : "No model — open Models"}</Text>
           </View>
           <Pressable onPress={() => router.push("/hands-free")} style={s.wakeBtn} testID="wake-word-shortcut" accessibilityLabel="Hands-free settings">
             <Icon name="ear-outline" size={19} color={colors.onSurface} />
@@ -109,7 +108,7 @@ export default function AssistantHome() {
           <Composer ref={inputRef} value={text} onChangeText={setText} onSend={() => ask(text)} onMic={() => setMic(true)} />
         </View>
       </KeyboardAvoidingView>
-      <MicSheet visible={mic} onClose={() => setMic(false)} onUseKeyboard={() => setTimeout(() => inputRef.current?.focus(), 300)} />
+      <MicSheet visible={mic} onClose={() => setMic(false)} onUseKeyboard={() => setTimeout(() => inputRef.current?.focus(), 300)} onResult={(t) => ask(t)} />
     </View>
   );
 }

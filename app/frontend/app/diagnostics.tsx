@@ -9,9 +9,8 @@ import { Row, Section } from "@/src/components/common/Row";
 import { ScreenHeader } from "@/src/components/common/ScreenHeader";
 import { CAPABILITIES } from "@/src/constants/capabilities";
 import { useMicPermission } from "@/src/hooks/useMicPermission";
-import { isSupabaseConfigured } from "@/src/lib/supabase";
-import { aiEngine } from "@/src/services/agent/AgentOrchestrator";
 import { modelService } from "@/src/services/models/ModelService";
+import { isExpoGo, nativeInference } from "@/src/services/native";
 import { NetworkService, type NetworkInfo } from "@/src/services/network/NetworkService";
 import { conversationRepository } from "@/src/services/storage/SQLiteService";
 import { speechRecognition, speechSynthesis, wakeWordEngine } from "@/src/services/voice";
@@ -47,13 +46,14 @@ export default function DiagnosticsScreen() {
 
         <Section title="Voice pipeline" footer="Working = real today. Simulated = mock behaviour. Native pending = waiting on an Android integration.">
           <Row title="Microphone permission" value={perm ? (perm.granted ? "Granted" : perm.canAskAgain ? "Not granted" : "Blocked") : "…"} status="implemented" testID="diag-mic" />
-          <Row title="Wake-word engine" value={wakeWordEngine.name} status="implemented" testID="diag-wake" />
-          <Row title="Speech recognition" value={speechRecognition.name} status="implemented" testID="diag-stt" />
-          <Row title="LLM runtime" value="Connected Local Engine" status="implemented" testID="diag-llm" />
-          <Row title="Selected model" value={selected?.name ?? "Qwen 2.5 (Default)"} status="implemented" testID="diag-model" />
+          <Row title="Wake-word engine" value={wakeWordEngine.name} status="planned" testID="diag-wake" />
+          <Row title="App runtime" value={isExpoGo ? "Expo Go (no native AI)" : "Development / release build"} testID="diag-runtime" />
+          <Row title="Speech recognition" value={nativeInference.whisperAvailable ? speechRecognition.name : "whisper.rn not in this build"} status="implemented" testID="diag-stt" />
+          <Row title="LLM runtime" value={nativeInference.llamaAvailable ? "On-device · llama.rn" : "llama.rn not in this build"} status="implemented" testID="diag-llm" />
+          <Row title="Selected model" value={selected?.name ?? "None installed"} status="implemented" testID="diag-model" />
           <Row title="Speech synthesis" value={speechSynthesis.name} status="implemented" testID="diag-tts" />
           <Row title="Local database" value={conversationRepository.backend === "sqlite" ? "SQLite" : "Web KV fallback"} status="implemented" testID="diag-db" />
-          <Row title="Backend API" value="FastAPI (Active)" status="implemented" last testID="diag-backend" />
+          <Row title="Backend API" value="Optional · on-device default" status="implemented" last testID="diag-backend" />
         </Section>
 
         <Section title="Capabilities" footer="Online capabilities need an internet connection. Offline capabilities work without one once their assets are installed.">

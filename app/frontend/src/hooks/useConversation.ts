@@ -17,7 +17,9 @@ export function useConversation(initialId: string | null) {
   const [loading, setLoading] = useState(Boolean(initialId));
   const busy = useRef(false);
   const msgsRef = useRef<Message[]>([]);
-  msgsRef.current = messages;
+  useEffect(() => {
+    msgsRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     if (!initialId) return;

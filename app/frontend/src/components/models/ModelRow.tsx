@@ -30,8 +30,8 @@ export function ModelRow({ m, state, progress = 0, error, selected, onDownload, 
         <Icon name="chatbubble" size={16} color={hue} />
       </View>
       <View style={s.body}>
-        {state === "downloading" ? <Text style={[s.kicker, { color: colors.warning }]}>Downloading… (simulated)</Text> : null}
-        {state === "installed" ? <Text style={[s.kicker, { color: selected ? colors.accent : colors.success }]}>{selected ? "Active · simulated install" : "Installed · simulated"}</Text> : null}
+        {state === "downloading" ? <Text style={[s.kicker, { color: colors.warning }]}>Downloading…</Text> : null}
+        {state === "installed" ? <Text style={[s.kicker, { color: selected ? colors.accent : colors.success }]}>{selected ? "Active" : "Installed"}</Text> : null}
         <Text style={s.name} numberOfLines={1}>{m.name}</Text>
         <View style={s.metaRow}>
           <View style={[s.badge, { backgroundColor: colors.surfaceTertiary }]}><Text style={[s.badgeText, { color: hue }]}>{m.params}</Text></View>

@@ -1,96 +1,79 @@
-import { MockAIEngine } from "@/src/services/ai/MockAIEngine";
-import type { AIEngine } from "@/src/services/ai/AIEngine.interface";
+import { apiRequest, isBackendConfigured } from "@/src/services/api";
+import { onDeviceLlama } from "@/src/services/ai/OnDeviceLlamaEngine";
+import { ruleEngine } from "@/src/services/ai/MockAIEngine";
+import { detectToolIntent } from "@/src/services/ai/toolIntent";
 import { ToolRegistry } from "@/src/services/tools/ToolRegistry";
-import type { AssistantState, ToolCall } from "@/src/types";
-import { apiRequest } from "@/src/services/api";
+import type { AIEngine } from "@/src/services/ai/AIEngine.interface";
+import type { AssistantState, Message, ToolCall } from "@/src/types";
 
-import type { AgentOrchestrator } from "./AgentOrchestrator.interface";
+import type { AgentOrchestrator, AgentReply } from "./AgentOrchestrator.interface";
 
-const describe = (tool: ToolCall["tool"], p: Record<string, string>) => {
-  switch (tool) {
-    case "create_reminder":
-      return `${p.task} · ${p.time}`;
-    case "draft_message":
-      return `To ${p.recipient}`;
-    case "web_search":
-      return p.query;
-    default:
-      return ToolRegistry.get(tool)?.label || tool;
-  }
-};
-
-class HybridAgentOrchestrator implements AgentOrchestrator {
-  constructor(private fallbackEngine: AIEngine) {}
-
-  async handle(
-    text: string,
-    history: Parameters<AIEngine["generate"]>[0]["history"],
-    onState: (s: AssistantState) => void
-  ) {
+/** On-device first: tools -> local LLM -> optional backend -> rule fallback. */
+class OnDeviceAgentOrchestrator implements AgentOrchestrator {
+  async handle(text: string, history: Message[], onState: (s: AssistantState) => void): Promise<AgentReply> {
     onState("processing");
 
-    // 1. Try Backend API first
-    try {
-      const backendRes = await apiRequest<{ text: string; tool: ToolCall | null }>("api/chat/generate", {
+    // 1. Offline tool-intent detection.
+    const intent = detectToolIntent(text);
+    if (intent) {
+      const call: ToolCall = {
+        tool: intent.tool,
+        params: intent.params,
+        status: "pending_confirmation",
+        summary: intent.summary,
+      };
+      if (intent.requiresConfirmation) {
+        return { text: intent.intro, tool: call };
+      }
+      onState("executing");
+      const out = await ToolRegistry.get(intent.tool).execute(intent.params);
+      return { text: out.message, tool: { ...call, status: out.status } };
+    }
+
+    // 2. Conversational generation.
+    const text2 = await this.generate(text, history);
+    return { text: text2, tool: null };
+  }
+
+  private async generate(text: string, history: Message[]): Promise<string> {
+    // 2a. On-device model (preferred).
+    if (await onDeviceLlama.ensureReady()) {
+      const res = await onDeviceLlama.generate({ text, history });
+      if (res.text) return res.text;
+    }
+
+    // 2b. Optional companion backend.
+    if (isBackendConfigured()) {
+      const backend = await apiRequest<{ text: string; tool: ToolCall | null }>("api/chat/generate", {
         method: "POST",
         body: JSON.stringify({ text, history }),
       });
-
-      if (backendRes.data && !backendRes.error) {
-        const { text: resText, tool } = backendRes.data;
-        if (tool && tool.status === "pending_confirmation") {
-          return { text: resText, tool };
-        }
-        if (tool && tool.status !== "pending_confirmation") {
-          onState("executing");
-          return { text: resText, tool };
-        }
-        return { text: resText, tool: null };
+      if (backend.data && !backend.error && backend.data.text) {
+        return backend.data.text;
       }
-    } catch {
-      // Continue to local engine fallback
     }
 
-    // 2. Offline / Local fallback engine
-    const res = await this.fallbackEngine.generate({ text, history });
-    if (!res.toolRequest) return { text: res.text, tool: null };
+    // 2c. A model is selected but can't run (Expo Go / missing native module / load failure):
+    // say so precisely instead of telling the user to download a model they already have.
+    const why = onDeviceLlama.unavailableReason();
+    if (why) return why;
 
-    const def = ToolRegistry.get(res.toolRequest.tool);
-    const params = Object.fromEntries(def.params.map((k) => [k, String(res.toolRequest!.params[k] ?? "")]));
-    const call: ToolCall = { tool: def.name, params, status: "pending_confirmation", summary: describe(def.name, params) };
-    if (def.requiresConfirmation) return { text: res.text, tool: call };
-
-    onState("executing");
-    const out = await def.execute(params);
-    return { text: out.message, tool: { ...call, status: out.status } };
+    // 2d. Deterministic offline fallback (no model selected).
+    const fallback = await ruleEngine.generate({ text, history });
+    return fallback.text;
   }
 
-  async resolveConfirmation(tool: ToolCall, approved: boolean, onState: (s: AssistantState) => void) {
+  async resolveConfirmation(tool: ToolCall, approved: boolean, onState: (s: AssistantState) => void): Promise<AgentReply> {
     if (!approved) {
-      return { text: "Cancelled. Nothing was changed.", tool: { ...tool, status: "cancelled" as const } };
+      return { text: "Cancelled. Nothing was changed on your device.", tool: { ...tool, status: "cancelled" } };
     }
-
     onState("executing");
-
-    // 1. Try Backend resolution
-    try {
-      const backendRes = await apiRequest<{ text: string; tool: ToolCall }>("api/chat/resolve-tool", {
-        method: "POST",
-        body: JSON.stringify({ tool, approved }),
-      });
-
-      if (backendRes.data && !backendRes.error) {
-        return backendRes.data;
-      }
-    } catch {
-      // Fallback to local execution
-    }
-
-    // 2. Local execution fallback
     const out = await ToolRegistry.get(tool.tool).execute(tool.params);
     return { text: out.message, tool: { ...tool, status: out.status } };
   }
 }
 
-export const aiEngine: AIEngine = new MockAIEngine();
-export const agent: AgentOrchestrator = new HybridAgentOrchestrator(aiEngine);
+export const agent: AgentOrchestrator = new OnDeviceAgentOrchestrator();
+
+/** The engine the UI reflects for status (name / readiness). */
+export const aiEngine: AIEngine = onDeviceLlama;
