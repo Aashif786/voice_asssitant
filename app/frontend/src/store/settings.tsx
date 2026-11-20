@@ -18,6 +18,11 @@ export interface Settings {
   conversationRetention: "forever" | "30d" | "7d";
   temperature: number;
   contextLength: number;
+  callMode: "dialer" | "direct";
+  ownerOnlyMode: boolean;
+  voiceEnrolled: boolean;
+  voiceVerificationThreshold: number;
+  antiSpoofingEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -34,6 +39,11 @@ export const DEFAULT_SETTINGS: Settings = {
   conversationRetention: "forever",
   temperature: 0.7,
   contextLength: 2048,
+  callMode: "dialer",
+  ownerOnlyMode: true,
+  voiceEnrolled: false,
+  voiceVerificationThreshold: 0.75,
+  antiSpoofingEnabled: true,
 };
 
 const KEY = "ova_settings_v1";

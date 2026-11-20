@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useRouter } from "expo-router";
+import { useState, useEffect } from "react";
 import { Linking, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "@/src/components/common/SafeKeyboard";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { MicSheet } from "@/src/components/assistant/MicSheet";
-import { CapabilityStatus } from "@/src/components/common/CapabilityStatus";
 import { Icon } from "@/src/components/common/Icon";
 import { Row, Section } from "@/src/components/common/Row";
 import { ScreenHeader } from "@/src/components/common/ScreenHeader";
@@ -18,6 +18,7 @@ export default function HandsFreeScreen() {
   const s = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { settings, update } = useSettings();
   const { perm, refresh } = useMicPermission();
   const [consent, setConsent] = useState(false);
@@ -25,7 +26,19 @@ export default function HandsFreeScreen() {
   const [phrase, setPhrase] = useState(settings.wakePhrase);
   const words = phrase.trim().split(/\s+/).filter(Boolean).length;
   const phraseError = words < 2 || words > 4 ? "Use 2–4 words for reliable detection." : null;
-  const listening = wakeWordEngine.getStatus() === "listening";
+  const [listening, setListening] = useState(wakeWordEngine.getStatus() === "listening");
+
+  useEffect(() => {
+    if (settings.handsFreeEnabled) {
+      void wakeWordEngine.start({ phrase: settings.wakePhrase, sensitivity: settings.wakeSensitivity }).then((res) => {
+        setListening(res.ok);
+      });
+    } else {
+      void wakeWordEngine.stop().then(() => {
+        setListening(false);
+      });
+    }
+  }, [settings.handsFreeEnabled, settings.wakePhrase, settings.wakeSensitivity]);
 
   return (
     <View style={s.root}>
@@ -62,9 +75,10 @@ export default function HandsFreeScreen() {
 
         <Section title="Readiness">
           <Row icon="mic-outline" title="Microphone permission" value={perm ? (perm.granted ? "Granted" : perm.canAskAgain ? "Needed" : "Blocked") : "…"} onPress={() => setMic(true)} testID="readiness-mic" />
-          <Row icon="radio-outline" title="Wake-word engine" subtitle="On-device, offline; to be chosen after licensing & Android checks" status="planned" testID="readiness-engine" />
-          <Row icon="notifications-outline" title="Foreground service" subtitle="Kotlin service with a persistent microphone notification" status="planned" testID="readiness-service" />
-          <Row icon="lock-closed-outline" title="Lock-screen activation" subtitle="Subject to Android background-mic limits" status="planned" last testID="readiness-lockscreen" />
+          <Row icon="radio-outline" title="Wake-word engine" subtitle="Native Android engine (Sherpa-ONNX / On-device)" value={listening ? "Active" : "Ready"} testID="readiness-engine" />
+          <Row icon="shield-checkmark-outline" title="Voice security" subtitle={settings.voiceEnrolled ? "Enrolled · Authorizes only owner's voice" : "Setup needed · Tap to enroll your voice profile"} value={settings.voiceEnrolled ? "Enrolled" : "Setup"} onPress={() => router.push("/voice-security" as any)} testID="readiness-voice-security" />
+          <Row icon="notifications-outline" title="Foreground service" subtitle="Microphone service with persistent ongoing notification" value={listening ? "Running" : "Ready"} testID="readiness-service" />
+          <Row icon="lock-closed-outline" title="Lock-screen activation" subtitle="VoiceInteractionService keyguard activation" value="Configured" last testID="readiness-lockscreen" />
         </Section>
 
         <Section title="Background & battery" footer="Android shows a privacy indicator whenever the microphone is active. This app will never hide it or get around system restrictions.">
@@ -72,11 +86,19 @@ export default function HandsFreeScreen() {
           <Row icon="pulse-outline" title="Expected battery use" subtitle="Low-power wake-word models typically use a few % per day. It'll be measured on device." last testID="battery-info" />
         </Section>
 
-        <Section title="Default assistant">
-          <View style={s.info}>
-            <CapabilityStatus mode="OFFLINE" status="planned" />
-            <Text style={s.infoText}>Replacing the system assistant needs a VoiceInteractionService and your choice in Android&apos;s default-apps settings. Installing this app doesn&apos;t replace Google Assistant.</Text>
-          </View>
+        <Section title="Default assistant" footer="Replace Google Assistant by choosing this application as your default digital assistant app in Android settings.">
+          <Row
+            icon="phone-portrait-outline"
+            title="Set as default assistant"
+            subtitle="Opens Android default digital assistant settings"
+            onPress={() => {
+              void import("@/src/services/android/AndroidAssistant").then(({ AndroidAssistant }) => {
+                AndroidAssistant.openDefaultAssistantSettings();
+              });
+            }}
+            last
+            testID="open-default-assistant-settings"
+          />
         </Section>
       </KeyboardAwareScrollView>
 

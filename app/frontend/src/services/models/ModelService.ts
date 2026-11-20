@@ -6,10 +6,14 @@ import { apiRequest, isBackendConfigured } from "@/src/services/api";
 import { nativeInference } from "@/src/services/native";
 import { storage } from "@/src/utils/storage";
 
-export type ModelState = "available" | "downloading" | "installed" | "error";
+export type ModelType = "llm" | "stt";
+export type ExecutionMode = "local" | "cloud" | "system";
+export type ModelState = "available" | "downloading" | "installed" | "error" | "unavailable";
 
 export interface ModelInfo {
   id: string;
+  type: ModelType;
+  provider: string;
   family: string;
   name: string;
   params: string;
@@ -17,17 +21,26 @@ export interface ModelInfo {
   format: string;
   quantization: string;
   languages: string[];
+  execution: ExecutionMode;
+  requiresDownload: boolean;
   compatibility: { level: "likely" | "unverified" | "unlikely"; note: string };
   hue: "brand" | "accent" | "success" | "warning" | "error";
-  downloadUrl: string;
+  downloadUrl?: string;
+}
+
+export interface ModelRegistryState {
+  installed: string[];
+  selectedLlm: string | null;
+  selectedStt: string | null;
 }
 
 export interface ModelService {
   readonly isSimulated: boolean;
-  catalogue(): ModelInfo[];
+  catalogue(type?: ModelType): ModelInfo[];
+  findModel(id: string): ModelInfo | null;
   pathFor(id: string): string;
-  loadState(): Promise<{ installed: string[]; selected: string | null }>;
-  saveState(s: { installed: string[]; selected: string | null }): Promise<void>;
+  loadState(): Promise<ModelRegistryState>;
+  saveState(s: Partial<ModelRegistryState>): Promise<void>;
   download(id: string, onProgress: (p: number) => void): Promise<void>;
   delete(id: string): Promise<void>;
   availableBytes(): number | null;
@@ -35,56 +48,215 @@ export interface ModelService {
 
 const GB = 1024 ** 3;
 const MODELS_DIR = (FS.documentDirectory ?? "") + "models/";
-const SELECTED_KEY = "ova_selected_model_v2";
 
-const CATALOGUE: ModelInfo[] = [
+const SELECTED_LLM_KEY = "ova_selected_llm_model";
+const SELECTED_STT_KEY = "ova_selected_stt_model";
+const LEGACY_SELECTED_KEY = "ova_selected_model_v2";
+
+export const MODEL_CATALOGUE: ModelInfo[] = [
+  // ======================== LLM Models ========================
   {
-    id: "smollm2-135m", family: "SmolLM", name: "SmolLM2 135M Instruct", params: "135M",
-    sizeBytes: 105487360, format: "GGUF", quantization: "Q4_K_M", languages: ["EN"],
-    compatibility: { level: "likely", note: "Smallest footprint · instant replies" }, hue: "accent",
+    id: "smollm2-135m",
+    type: "llm",
+    provider: "Hugging Face",
+    family: "SmolLM",
+    name: "SmolLM2 135M Instruct",
+    params: "135M",
+    sizeBytes: 105487360,
+    format: "GGUF",
+    quantization: "Q4_K_M",
+    languages: ["EN"],
+    execution: "local",
+    requiresDownload: true,
+    compatibility: { level: "likely", note: "Smallest footprint · instant offline replies" },
+    hue: "accent",
     downloadUrl: "https://huggingface.co/prithivMLmods/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct.Q4_K_M.gguf",
   },
   {
-    id: "qwen2.5-0.5b", family: "Qwen", name: "Qwen 2.5 0.5B Instruct", params: "0.5B",
-    sizeBytes: 491384832, format: "GGUF", quantization: "Q4_K_M", languages: ["EN", "ZH", "+27"],
-    compatibility: { level: "likely", note: "High precision · fits 2 GB RAM" }, hue: "success",
+    id: "qwen2.5-0.5b",
+    type: "llm",
+    provider: "Alibaba",
+    family: "Qwen",
+    name: "Qwen 2.5 0.5B Instruct",
+    params: "0.5B",
+    sizeBytes: 491384832,
+    format: "GGUF",
+    quantization: "Q4_K_M",
+    languages: ["EN", "ZH", "+27"],
+    execution: "local",
+    requiresDownload: true,
+    compatibility: { level: "likely", note: "High precision · fits 2 GB RAM" },
+    hue: "success",
     downloadUrl: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
   },
   {
-    id: "tinyllama-1.1b", family: "TinyLlama", name: "TinyLlama 1.1B Chat", params: "1.1B",
-    sizeBytes: 668782592, format: "GGUF", quantization: "Q4_K_M", languages: ["EN"],
-    compatibility: { level: "likely", note: "Fast chat engine · fits 3 GB RAM" }, hue: "brand",
+    id: "tinyllama-1.1b",
+    type: "llm",
+    provider: "TheBloke",
+    family: "TinyLlama",
+    name: "TinyLlama 1.1B Chat",
+    params: "1.1B",
+    sizeBytes: 668782592,
+    format: "GGUF",
+    quantization: "Q4_K_M",
+    languages: ["EN"],
+    execution: "local",
+    requiresDownload: true,
+    compatibility: { level: "likely", note: "Fast chat engine · fits 3 GB RAM" },
+    hue: "brand",
     downloadUrl: "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
   },
   {
-    id: "qwen2.5-1.5b", family: "Qwen", name: "Qwen 2.5 1.5B Instruct", params: "1.5B",
-    sizeBytes: 1117392896, format: "GGUF", quantization: "Q4_K_M", languages: ["EN", "ZH", "+27"],
-    compatibility: { level: "likely", note: "Balanced reasoning · fits 4 GB RAM" }, hue: "success",
+    id: "qwen2.5-1.5b",
+    type: "llm",
+    provider: "Alibaba",
+    family: "Qwen",
+    name: "Qwen 2.5 1.5B Instruct",
+    params: "1.5B",
+    sizeBytes: 1117392896,
+    format: "GGUF",
+    quantization: "Q4_K_M",
+    languages: ["EN", "ZH", "+27"],
+    execution: "local",
+    requiresDownload: true,
+    compatibility: { level: "likely", note: "Balanced reasoning · fits 4 GB RAM" },
+    hue: "success",
     downloadUrl: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
   },
   {
-    id: "llama3.2-1b", family: "Llama", name: "Llama 3.2 1B Instruct", params: "1B",
-    sizeBytes: 807759872, format: "GGUF", quantization: "Q4_K_M", languages: ["EN", "DE", "FR", "HI", "+4"],
-    compatibility: { level: "likely", note: "Meta's compact model · fast replies" }, hue: "brand",
+    id: "llama3.2-1b",
+    type: "llm",
+    provider: "Meta",
+    family: "Llama",
+    name: "Llama 3.2 1B Instruct",
+    params: "1B",
+    sizeBytes: 807759872,
+    format: "GGUF",
+    quantization: "Q4_K_M",
+    languages: ["EN", "DE", "FR", "HI", "+4"],
+    execution: "local",
+    requiresDownload: true,
+    compatibility: { level: "likely", note: "Meta's compact model · fast replies" },
+    hue: "brand",
     downloadUrl: "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
   },
   {
-    id: "llama3.2-3b", family: "Llama", name: "Llama 3.2 3B Instruct", params: "3B",
-    sizeBytes: 2019448832, format: "GGUF", quantization: "Q4_K_M", languages: ["EN", "DE", "FR", "HI", "+4"],
-    compatibility: { level: "unverified", note: "Needs ~4 GB free RAM · deep reasoning" }, hue: "warning",
+    id: "llama3.2-3b",
+    type: "llm",
+    provider: "Meta",
+    family: "Llama",
+    name: "Llama 3.2 3B Instruct",
+    params: "3B",
+    sizeBytes: 2019448832,
+    format: "GGUF",
+    quantization: "Q4_K_M",
+    languages: ["EN", "DE", "FR", "HI", "+4"],
+    execution: "local",
+    requiresDownload: true,
+    compatibility: { level: "unverified", note: "Needs ~4 GB free RAM · deep reasoning" },
+    hue: "warning",
     downloadUrl: "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
   },
   {
-    id: "phi3.5-mini", family: "Phi", name: "Phi-3.5 Mini Instruct", params: "3.8B",
-    sizeBytes: 2393231360, format: "GGUF", quantization: "Q4_K_M", languages: ["EN", "+20"],
-    compatibility: { level: "unverified", note: "High reasoning · needs 4–6 GB RAM" }, hue: "warning",
+    id: "phi3.5-mini",
+    type: "llm",
+    provider: "Microsoft",
+    family: "Phi",
+    name: "Phi-3.5 Mini Instruct",
+    params: "3.8B",
+    sizeBytes: 2393231360,
+    format: "GGUF",
+    quantization: "Q4_K_M",
+    languages: ["EN", "+20"],
+    execution: "local",
+    requiresDownload: true,
+    compatibility: { level: "unverified", note: "High reasoning · needs 4–6 GB RAM" },
+    hue: "warning",
     downloadUrl: "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf",
   },
   {
-    id: "qwen2.5-7b", family: "Qwen", name: "Qwen 2.5 7B Instruct", params: "7B",
-    sizeBytes: 4683074240, format: "GGUF", quantization: "Q4_K_M", languages: ["EN", "ZH", "+27"],
-    compatibility: { level: "unlikely", note: "Needs ~8 GB RAM; high-end devices only" }, hue: "error",
-    downloadUrl: "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+    id: "llm-companion",
+    type: "llm",
+    provider: "Companion Server",
+    family: "Remote LLM",
+    name: "Companion Backend LLM",
+    params: "Cloud/LAN",
+    sizeBytes: 0,
+    format: "FastAPI",
+    quantization: "Server-side",
+    languages: ["EN", "Multi"],
+    execution: "cloud",
+    requiresDownload: false,
+    compatibility: { level: "likely", note: "Delegates reasoning to companion server · 0 MB local storage" },
+    hue: "brand",
+  },
+
+  // ======================== Speech-to-Text Models ========================
+  {
+    id: "stt-system",
+    type: "stt",
+    provider: "Android System",
+    family: "System STT",
+    name: "System Speech Recognizer",
+    params: "Built-in",
+    sizeBytes: 0,
+    format: "Android API",
+    quantization: "Native",
+    languages: ["EN", "Multi"],
+    execution: "system",
+    requiresDownload: false,
+    compatibility: { level: "likely", note: "On-device Android system speech recognizer · No download required" },
+    hue: "success",
+  },
+  {
+    id: "stt-whisper-base",
+    type: "stt",
+    provider: "OpenAI / whisper.cpp",
+    family: "Whisper",
+    name: "Whisper Base (English)",
+    params: "74M",
+    sizeBytes: 147951465, // ~141 MB
+    format: "GGML",
+    quantization: "Q16",
+    languages: ["EN"],
+    execution: "local",
+    requiresDownload: true,
+    compatibility: { level: "likely", note: "Private, high accuracy offline STT · 141 MB download" },
+    hue: "brand",
+    downloadUrl: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
+  },
+  {
+    id: "stt-whisper-tiny",
+    type: "stt",
+    provider: "OpenAI / whisper.cpp",
+    family: "Whisper",
+    name: "Whisper Tiny (English)",
+    params: "39M",
+    sizeBytes: 77712441, // ~74 MB
+    format: "GGML",
+    quantization: "Q16",
+    languages: ["EN"],
+    execution: "local",
+    requiresDownload: true,
+    compatibility: { level: "likely", note: "Ultra-compact offline STT · 74 MB download" },
+    hue: "accent",
+    downloadUrl: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin",
+  },
+  {
+    id: "stt-companion",
+    type: "stt",
+    provider: "Companion Server",
+    family: "Remote STT",
+    name: "Companion Whisper STT",
+    params: "Cloud/LAN",
+    sizeBytes: 0,
+    format: "FastAPI Whisper",
+    quantization: "FP16",
+    languages: ["EN", "Multi"],
+    execution: "cloud",
+    requiresDownload: false,
+    compatibility: { level: "likely", note: "Transcribes on companion backend · No local storage used" },
+    hue: "brand",
   },
 ];
 
@@ -98,47 +270,98 @@ async function ensureDir(): Promise<void> {
   }
 }
 
-class OnDeviceModelService implements ModelService {
+class HybridModelService implements ModelService {
   readonly isSimulated = false;
 
-  catalogue(): ModelInfo[] {
-    return CATALOGUE;
+  catalogue(type?: ModelType): ModelInfo[] {
+    if (!type) return MODEL_CATALOGUE;
+    return MODEL_CATALOGUE.filter((m) => m.type === type);
+  }
+
+  findModel(id: string): ModelInfo | null {
+    return MODEL_CATALOGUE.find((m) => m.id === id) ?? null;
   }
 
   pathFor(id: string): string {
+    const m = this.findModel(id);
+    if (m?.type === "stt") {
+      return `${MODELS_DIR}${id}.bin`;
+    }
     return `${MODELS_DIR}${id}.gguf`;
   }
 
-  private async installedIds(): Promise<string[]> {
-    const ids: string[] = [];
-    for (const m of CATALOGUE) {
-      try {
-        const info = await FS.getInfoAsync(this.pathFor(m.id));
-        if (info.exists && (info.size ?? 0) > 1024 * 1024) ids.push(m.id);
-      } catch {
-        /* ignore */
+  private async isModelInstalledOnDisk(m: ModelInfo): Promise<boolean> {
+    if (!m.requiresDownload) return true;
+    if (Platform.OS === "web") return false;
+    try {
+      const info = await FS.getInfoAsync(this.pathFor(m.id));
+      return Boolean(info.exists && (info.size ?? 0) > 1024 * 1024);
+    } catch {
+      return false;
+    }
+  }
+
+  async loadState(): Promise<ModelRegistryState> {
+    const installed: string[] = [];
+
+    for (const m of MODEL_CATALOGUE) {
+      if (await this.isModelInstalledOnDisk(m)) {
+        installed.push(m.id);
       }
     }
-    return ids;
+
+    // Load persisted selections
+    let selectedLlm = await storage.getItem<string | null>(SELECTED_LLM_KEY, null);
+    if (!selectedLlm) {
+      // Fallback check for legacy key
+      selectedLlm = await storage.getItem<string | null>(LEGACY_SELECTED_KEY, null);
+    }
+
+    // Verify LLM validity
+    const installedLlms = installed.filter((id) => this.findModel(id)?.type === "llm");
+    if (!selectedLlm || !installed.includes(selectedLlm)) {
+      selectedLlm = installedLlms[0] ?? null;
+    }
+
+    // Load persisted STT selection (NEVER auto-download a model)
+    const selectedStt = await storage.getItem<string | null>(SELECTED_STT_KEY, null);
+
+    return {
+      installed,
+      selectedLlm,
+      selectedStt,
+    };
   }
 
-  async loadState(): Promise<{ installed: string[]; selected: string | null }> {
-    const installed = await this.installedIds();
-    const stored = await storage.getItem<string | null>(SELECTED_KEY, null);
-    const selected = stored && installed.includes(stored) ? stored : installed[0] ?? null;
-    return { installed, selected };
-  }
-
-  async saveState(s: { installed: string[]; selected: string | null }): Promise<void> {
-    await storage.setItem(SELECTED_KEY, s.selected);
+  async saveState(s: Partial<ModelRegistryState>): Promise<void> {
+    if (s.selectedLlm !== undefined) {
+      await storage.setItem(SELECTED_LLM_KEY, s.selectedLlm);
+      await storage.setItem(LEGACY_SELECTED_KEY, s.selectedLlm);
+      if (s.selectedLlm && isBackendConfigured()) {
+        try {
+          await apiRequest(`api/models/select/${s.selectedLlm}`, { method: "POST" });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (s.selectedStt !== undefined) {
+      await storage.setItem(SELECTED_STT_KEY, s.selectedStt);
+    }
   }
 
   async download(id: string, onProgress: (p: number) => void): Promise<void> {
-    const model = CATALOGUE.find((m) => m.id === id);
-    if (!model) throw new Error("Unknown model");
+    const model = this.findModel(id);
+    if (!model) throw new Error("Unknown model ID");
+    if (!model.requiresDownload || !model.downloadUrl) {
+      onProgress(1.0);
+      return;
+    }
+
     if (model.compatibility.level === "unlikely") {
       throw new Error("Blocked: estimated memory need exceeds this device class");
     }
+
     await ensureDir();
     const dest = this.pathFor(id);
     onProgress(0.01);
@@ -160,6 +383,8 @@ class OnDeviceModelService implements ModelService {
   }
 
   async delete(id: string): Promise<void> {
+    const model = this.findModel(id);
+    if (!model || !model.requiresDownload) return;
     await FS.deleteAsync(this.pathFor(id), { idempotent: true }).catch(() => {});
   }
 
@@ -173,166 +398,25 @@ class OnDeviceModelService implements ModelService {
   }
 }
 
-class ConnectedModelService implements ModelService {
-  readonly isSimulated = false;
-
-  catalogue(): ModelInfo[] {
-    return CATALOGUE;
-  }
-
-  pathFor(id: string): string {
-    return id;
-  }
-
-  async loadState(): Promise<{ installed: string[]; selected: string | null }> {
-    try {
-      const res = await apiRequest<{ installed: string[]; selected: string | null }>("api/models/state");
-      if (res.data) {
-        return {
-          installed: res.data.installed || [],
-          selected: res.data.selected || null,
-        };
-      }
-    } catch {}
-    const stored = await storage.getItem<string | null>(SELECTED_KEY, null);
-    return { installed: [], selected: stored };
-  }
-
-  async saveState(s: { installed: string[]; selected: string | null }): Promise<void> {
-    await storage.setItem(SELECTED_KEY, s.selected);
-    if (s.selected) {
-      try {
-        await apiRequest(`api/models/select/${s.selected}`, { method: "POST" });
-      } catch {}
-    }
-  }
-
-  async download(id: string, onProgress: (p: number) => void): Promise<void> {
-    onProgress(0.02);
-    let done = false;
-    const poll = setInterval(async () => {
-      if (done) return;
-      try {
-        const progRes = await apiRequest<{ progress: number; status: string }>(`api/models/progress/${id}`);
-        if (progRes.data?.progress !== undefined) {
-          const val = Math.max(0.02, Math.min(progRes.data.progress, 0.99));
-          onProgress(val);
-          if (progRes.data.status === "completed") {
-            done = true;
-          }
-        }
-      } catch {}
-    }, 400);
-
-    try {
-      const res = await apiRequest(`api/models/download/${id}`, { method: "POST" });
-      if (res.error) throw new Error(res.error);
-      onProgress(1.0);
-    } finally {
-      done = true;
-      clearInterval(poll);
-    }
-  }
-
-  async delete(id: string): Promise<void> {
-    try {
-      await apiRequest(`api/models/${id}`, { method: "DELETE" });
-    } catch {}
-  }
-
-  availableBytes(): number | null {
-    return 25 * GB;
-  }
-}
-
-class HybridModelService implements ModelService {
-  private local = new OnDeviceModelService();
-  private connected = new ConnectedModelService();
-
-  private active(): ModelService {
-    if (Platform.OS === "web" || (!nativeInference.llamaAvailable && isBackendConfigured())) {
-      return this.connected;
-    }
-    return this.local;
-  }
-
-  get isSimulated(): boolean {
-    return this.active().isSimulated;
-  }
-
-  catalogue(): ModelInfo[] {
-    return this.active().catalogue();
-  }
-
-  pathFor(id: string): string {
-    return this.active().pathFor(id);
-  }
-
-  loadState(): Promise<{ installed: string[]; selected: string | null }> {
-    return this.active().loadState();
-  }
-
-  saveState(s: { installed: string[]; selected: string | null }): Promise<void> {
-    return this.active().saveState(s);
-  }
-
-  download(id: string, onProgress: (p: number) => void): Promise<void> {
-    return this.active().download(id, onProgress);
-  }
-
-  delete(id: string): Promise<void> {
-    return this.active().delete(id);
-  }
-
-  availableBytes(): number | null {
-    return this.active().availableBytes();
-  }
-}
-
 export const modelService: ModelService = new HybridModelService();
 
-// ---- On-device speech (Whisper) model, managed separately from chat models. ----
-const SPEECH_PATH = `${MODELS_DIR}whisper-base-en.bin`;
-const SPEECH_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
-
+// Legacy backward-compatibility alias for on-device whisper path
 export const speechModel = {
-  path: SPEECH_PATH,
-  sizeBytes: 147951465, // ~141 MB (ggml-base.en)
+  get path() {
+    return modelService.pathFor("stt-whisper-base");
+  },
+  sizeBytes: 147951465,
   nativeAvailable(): boolean {
     return nativeInference.whisperAvailable;
   },
   async isInstalled(): Promise<boolean> {
-    if (Platform.OS === "web") return false;
-    try {
-      const info = await FS.getInfoAsync(SPEECH_PATH);
-      return info.exists && (info.size ?? 0) > 1024 * 1024;
-    } catch {
-      return false;
-    }
+    const state = await modelService.loadState();
+    return state.installed.includes("stt-whisper-base");
   },
   async download(onProgress: (p: number) => void): Promise<void> {
-    if (Platform.OS === "web") {
-      onProgress(1);
-      return;
-    }
-    await ensureDir();
-    onProgress(0.01);
-    const resumable = FS.createDownloadResumable(SPEECH_URL, SPEECH_PATH, {}, (p) => {
-      if (p.totalBytesExpectedToWrite > 0) {
-        onProgress(Math.min(0.99, Math.max(0.02, p.totalBytesWritten / p.totalBytesExpectedToWrite)));
-      }
-    });
-    try {
-      const result = await resumable.downloadAsync();
-      if (!result) throw new Error("Download did not complete");
-      onProgress(1);
-    } catch (e) {
-      await FS.deleteAsync(SPEECH_PATH, { idempotent: true }).catch(() => {});
-      throw e;
-    }
+    return modelService.download("stt-whisper-base", onProgress);
   },
   async remove(): Promise<void> {
-    if (Platform.OS === "web") return;
-    await FS.deleteAsync(SPEECH_PATH, { idempotent: true }).catch(() => {});
+    return modelService.delete("stt-whisper-base");
   },
 };

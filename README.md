@@ -75,11 +75,19 @@ The project features a **hybrid architecture**:
 voice_asssitant/
 ├── app/
 │   └── frontend/              # Expo / React Native TypeScript mobile & web app
-│       ├── app/               # Expo Router screens ((tabs), conversation, diagnostics, models)
+│       ├── app/               # Expo Router screens (tabs, voice-security, memory, routines, device-access)
+│       ├── modules/
+│       │   └── android-assistant/ # Native Android Kotlin Expo Module
+│       │       ├── AndroidAssistantModule.kt
+│       │       ├── AssistantForegroundService.kt
+│       │       ├── AssistantVoiceInteractionService.kt
+│       │       ├── AssistantNotificationListener.kt
+│       │       ├── KeystoreManager.kt & SpeakerVerificationManager.kt
+│       │       └── AppLauncher, ContactsManager, CallManager, SystemControlManager.kt
 │       ├── src/
 │       │   ├── components/    # VoiceOrb, MicSheet, Composer, ModelRow UI components
 │       │   ├── hooks/         # useConversation, useVoiceInput, useMicPermission
-│       │   ├── services/      # Voice, Native inference bridges, Models, Tools, Agent
+│       │   ├── services/      # Native Android bridge, AgentOrchestrator, TaskPlanner, Tools, Memory
 │       │   └── store/         # React Context stores for models and settings
 │       ├── .env               # Frontend environment config (backend URL)
 │       └── package.json
@@ -88,7 +96,7 @@ voice_asssitant/
 │   │   ├── routers/           # chat.py, models.py, tools.py, voice.py, diagnostics.py
 │   │   ├── services/          # ai_engine.py, local_llm.py, model_service.py, database.py
 │   │   └── config.py
-│   ├── tests/                 # Pytest test suite (10 integration tests)
+│   ├── tests/                 # Pytest test suite (11 integration tests)
 │   ├── run.py                 # Backend server entry point (port 8000)
 │   └── requirements.txt
 └── README.md
@@ -259,18 +267,54 @@ Download the resulting `.apk`, install it on your device, and run `npx expo star
 
 ---
 
-## 🛠️ Offline Tool Execution
+## 🛠️ Offline Tool & Device Control Execution
 
-The assistant includes an intent detection engine that executes offline tools without requiring an LLM response:
+The assistant includes an intent detection engine that executes offline tools and native Android hardware operations without requiring an LLM response:
 
 | Tool | Voice / Text Query Examples | Behavior |
 | :--- | :--- | :--- |
 | **Clock** | *"What time is it?"*, *"Tell me the date"* | Instant device time check |
+| **Daily Briefing** | *"Daily briefing"*, *"Brief me"*, *"How is my day"* | Synthesizes greeting, time, battery level, agenda, unread notifications, and personal memories |
+| **Personal Memory** | *"Remember that my passport is in the safe"*, *"What do you remember"* | Persists facts in on-device SQLite `user_memories` table |
+| **App Launcher** | *"Open WhatsApp"*, *"Launch Spotify"*, *"Start Settings"* | Discovers installed packages via `PackageManager` with fuzzy matching |
+| **Phone Call** | *"Call Sarah"*, *"Dial +1234567890"* | Queries `ContactsContract` and launches safe dialer or direct call |
+| **WhatsApp / SMS** | *"Draft message to Sarah saying I'm on my way"* | Resolves contact number and launches WhatsApp with pre-filled message |
+| **Flashlight / Torch** | *"Turn on flashlight"*, *"Toggle torch"* | Toggles camera LED via native `CameraManager` |
+| **Battery Status** | *"What's my battery level?"*, *"Check battery"* | Queries `BatteryManager` level & charging state |
+| **Volume Control** | *"Set volume to 70%"*, *"Turn up volume"*, *"Check volume"* | Adjusts Android `AudioManager` media/call/ring streams |
+| **Notifications** | *"Read my notifications"*, *"Check notifications"* | Reads recent incoming notifications via `NotificationListenerService` |
+| **Driving Mode** | *"Driving mode"*, *"Check car mode"*, *"Audio routing"* | Detects Bluetooth vehicle/headset audio routing and prioritizes hands-free mode |
 | **Reminder** | *"Remind me to buy milk tonight at 8 PM"* | Staged with confirmation, saves to SQLite |
 | **Calendar** | *"What's on my schedule for today?"*, *"Tomorrow's agenda"* | Reads local agenda and events |
-| **WhatsApp Draft**| *"Draft a message to Alex saying I am on my way"* | Prepares direct WhatsApp message link |
 | **File Search** | *"Search files for report.pdf"*, *"Find document notes"* | Indexed local workspace file search |
 | **Web Search** | *"Search the web for quantum computing"* | Online search with confirmation |
+
+---
+
+## 🔒 Biometric Voice Security & Background Assistant
+
+### Owner-Only Biometric Authentication
+* **Voice Calibration**: 4-prompt enrollment wizard extracts 192-dimensional acoustic filterbank embeddings.
+* **Android KeyStore Encryption**: Centroid template stored encrypted with `AES-256-GCM` in hardware-backed `AndroidKeyStore`.
+* **Cosine Similarity Matcher**: Evaluates speaker verification with customizable thresholds (Relaxed: 0.65, Standard: 0.75, Strict: 0.85).
+* **Anti-Spoofing & Replay Detector**: Spectral flatness and signal quality analysis rejects recorded or synthetic audio.
+* **Fail-Closed Access**: Unauthorized voices cannot execute actions, view private memories, or control device hardware.
+
+### Foreground Background Listening & System Assistant Hook
+* **Foreground Service**: Uses `FOREGROUND_SERVICE_MICROPHONE` with a persistent, low-priority notification to ensure reliable background wake-phrase listening.
+* **System Assistant Integration**: Registers `AssistantVoiceInteractionService` and `AssistantVoiceInteractionSessionService` allowing hardware gestures, assistant button presses, and lock-screen invocation.
+* **Notification Listener Service**: Registers `AssistantNotificationListener` (`BIND_NOTIFICATION_LISTENER_SERVICE`) to securely buffer and summarize incoming notifications upon voice request.
+
+---
+
+## 📱 User Interface & Settings
+
+Dedicated modular screens configured in Expo Router:
+1. **Voice Security (`/voice-security`)**: Live voice calibration wizard, anti-spoofing toggle, confidence threshold selector, and biometric deletion.
+2. **Device Access & Permissions (`/device-access`)**: Live inspection and deep links for Microphone, Contacts, Direct Calling, Notifications, and Default Assistant settings.
+3. **Personal Intelligence & Memory (`/memory`)**: Searchable memory cards, manual fact entry with categories, and full privacy purge.
+4. **Automations & Routines (`/routines`)**: Scheduled daily briefings (morning/evening) and one-tap preview.
+5. **Hands-Free (`/hands-free`)**: Wake word toggle ("Hey Assistant"), custom sensitivity slider, foreground service status.
 
 ---
 

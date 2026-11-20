@@ -29,6 +29,10 @@ function Shell() {
         <Stack.Screen name="models" />
         <Stack.Screen name="diagnostics" />
         <Stack.Screen name="hands-free" />
+        <Stack.Screen name="voice-security" />
+        <Stack.Screen name="device-access" />
+        <Stack.Screen name="memory" />
+        <Stack.Screen name="routines" />
       </Stack>
     </View>
   );

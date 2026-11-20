@@ -103,6 +103,55 @@ def test_search_files_tool():
     data = response.json()
     assert data["status"] == "completed"
 
+def test_native_device_tools():
+    # 1. Open app tool
+    app_res = client.post("/api/tools/execute", json={
+        "tool": "open_app",
+        "params": {"app_name": "WhatsApp"}
+    })
+    assert app_res.status_code == 200
+    assert app_res.json()["status"] == "completed"
+
+    # 2. Call contact tool
+    call_res = client.post("/api/tools/execute", json={
+        "tool": "call_contact",
+        "params": {"contact_name": "Zoro", "mode": "dialer"}
+    })
+    assert call_res.status_code == 200
+    assert call_res.json()["status"] == "completed"
+
+    # 3. Device control (flashlight)
+    dev_res = client.post("/api/tools/execute", json={
+        "tool": "device_control",
+        "params": {"setting": "flashlight", "value": "on"}
+    })
+    assert dev_res.status_code == 200
+    assert dev_res.json()["status"] == "completed"
+
+    # 4. Daily Briefing
+    brief_res = client.post("/api/tools/execute", json={
+        "tool": "daily_briefing",
+        "params": {}
+    })
+    assert brief_res.status_code == 200
+    assert brief_res.json()["status"] == "completed"
+
+    # 5. Personal Memory
+    mem_res = client.post("/api/tools/execute", json={
+        "tool": "manage_memory",
+        "params": {"action": "add", "fact": "coffee preference is oat latte"}
+    })
+    assert mem_res.status_code == 200
+    assert mem_res.json()["status"] == "completed"
+
+    # 6. Read notifications
+    notif_res = client.post("/api/tools/execute", json={
+        "tool": "read_notifications",
+        "params": {"limit": 5}
+    })
+    assert notif_res.status_code == 200
+    assert notif_res.json()["status"] == "completed"
+
 def test_models_lifecycle():
     # 1. Catalogue
     cat_res = client.get("/api/models/catalogue")

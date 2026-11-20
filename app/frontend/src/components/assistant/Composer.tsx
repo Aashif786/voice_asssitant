@@ -9,6 +9,7 @@ type Props = {
   onChangeText: (t: string) => void;
   onSend: () => void;
   onMic: () => void;
+  isListening?: boolean;
   placeholder?: string;
   disabled?: boolean;
 };
@@ -16,31 +17,53 @@ type Props = {
 export type ComposerRef = ElementRef<typeof TextInput>;
 
 /** Pill composer: text fallback + manual microphone entry point. */
-export const Composer = forwardRef<ComposerRef, Props>(function Composer({ value, onChangeText, onSend, onMic, placeholder = "Ask anything…", disabled }, ref) {
+export const Composer = forwardRef<ComposerRef, Props>(function Composer({
+  value,
+  onChangeText,
+  onSend,
+  onMic,
+  isListening = false,
+  placeholder = "Ask anything…",
+  disabled,
+}, ref) {
   const s = useStyles();
   const { colors } = useTheme();
   const hasText = value.trim().length > 0;
   return (
-    <View style={s.pill}>
+    <View style={[s.pill, isListening && { borderColor: colors.accent }]}>
       <TextInput
         ref={ref}
         value={value}
         onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={colors.onSurfaceTertiary}
+        placeholder={isListening ? "Listening… speak now" : placeholder}
+        placeholderTextColor={isListening ? colors.accent : colors.onSurfaceTertiary}
         style={s.input}
         onSubmitEditing={onSend}
         returnKeyType="send"
         submitBehavior="blurAndSubmit"
         testID="composer-input"
+        editable={!isListening}
       />
-      {hasText ? (
+      {hasText && !isListening ? (
         <Pressable onPress={onSend} disabled={disabled} testID="composer-send-button" accessibilityLabel="Send" style={({ pressed }) => [s.send, (pressed || disabled) && { opacity: 0.7 }]}>
           <Icon name="arrow-up" size={20} color={colors.onBrandPrimary} />
         </Pressable>
       ) : (
-        <Pressable onPress={onMic} testID="composer-mic-button" accessibilityLabel="Speak" style={({ pressed }) => [s.mic, pressed && { opacity: 0.7 }]}>
-          <Icon name="mic-outline" size={22} color={colors.onSurface} />
+        <Pressable
+          onPress={onMic}
+          testID="composer-mic-button"
+          accessibilityLabel={isListening ? "Stop listening and send" : "Speak"}
+          style={({ pressed }) => [
+            s.mic,
+            isListening && { backgroundColor: colors.accent },
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <Icon
+            name={isListening ? "stop" : "mic-outline"}
+            size={22}
+            color={isListening ? colors.onSurfaceInverse : colors.onSurface}
+          />
         </Pressable>
       )}
     </View>

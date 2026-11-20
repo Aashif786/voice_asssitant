@@ -12,6 +12,7 @@
     "lint": "expo lint"
   },
   "dependencies": {
+    "android-assistant": "file:./modules/android-assistant",
     "@expo/metro-runtime": "58.0.15",
     "@expo/vector-icons": "^15.1.1",
     "@fugood/react-native-audio-pcm-stream": "^1.1.4",

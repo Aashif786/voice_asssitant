@@ -16,7 +16,7 @@ class LocalLLMManager:
     """
     Manages local llama-server process for executing GGUF models offline.
     """
-    def __init__(self, port: int = 8081):
+    def __init__(self, port: int = 8082):
         self.port = port
         self.current_model_id: Optional[str] = None
         self.process: Optional[subprocess.Popen] = None

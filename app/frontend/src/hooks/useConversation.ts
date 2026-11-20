@@ -17,6 +17,7 @@ export function useConversation(initialId: string | null) {
   const [loading, setLoading] = useState(Boolean(initialId));
   const busy = useRef(false);
   const msgsRef = useRef<Message[]>([]);
+
   useEffect(() => {
     msgsRef.current = messages;
   }, [messages]);
@@ -37,65 +38,113 @@ export function useConversation(initialId: string | null) {
     await repo.addMessage(m);
   };
 
-  const speak = useCallback(async (m: Message) => {
-    setSpeakingId(m.id);
-    setState("speaking");
-    await speechSynthesis.speak(m.content, { rate: settings.speechRate, voice: settings.voice });
-    setSpeakingId((cur) => (cur === m.id ? null : cur));
-    setState((s) => (s === "speaking" ? "idle" : s));
-  }, [settings.speechRate, settings.voice]);
+  const speak = useCallback(
+    async (m: Message) => {
+      setSpeakingId(m.id);
+      setState("speaking");
+      try {
+        await speechSynthesis.speak(m.content, { rate: settings.speechRate, voice: settings.voice });
+      } finally {
+        setSpeakingId((cur) => (cur === m.id ? null : cur));
+        setState((s) => (s === "speaking" ? "idle" : s));
+      }
+    },
+    [settings.speechRate, settings.voice]
+  );
 
-  const stopSpeaking = useCallback(() => speechSynthesis.stop(), []);
+  const stopSpeaking = useCallback(() => {
+    speechSynthesis.stop();
+    setSpeakingId(null);
+    setState((s) => (s === "speaking" ? "idle" : s));
+  }, []);
 
   const reply = async (cid: string, text: string, tool: ToolCall | null) => {
     const m: Message = { id: newId(), conversationId: cid, role: "assistant", content: text, createdAt: Date.now(), tool };
     await push(m);
-    if (settings.autoPlayback && tool?.status !== "pending_confirmation") speak(m);
-    else setState("idle");
+    if (settings.autoPlayback && tool?.status !== "pending_confirmation") {
+      void speak(m);
+    } else {
+      setState("idle");
+    }
   };
 
-  const send = useCallback(async (raw: string) => {
-    const text = raw.trim();
-    if (!text || busy.current) return;
-    busy.current = true;
-    speechSynthesis.stop();
-    try {
-      let cid = convId;
-      if (!cid) {
-        const c = await repo.createConversation(text.length > 42 ? `${text.slice(0, 40)}…` : text);
-        cid = c.id;
-        setConvId(c.id);
-        setTitle(c.title);
+  const send = useCallback(
+    async (raw: string) => {
+      const text = raw.trim();
+      if (!text || busy.current) return;
+      busy.current = true;
+      speechSynthesis.stop();
+
+      try {
+        let cid = convId;
+        if (!cid) {
+          const c = await repo.createConversation(text.length > 42 ? `${text.slice(0, 40)}…` : text);
+          cid = c.id;
+          setConvId(c.id);
+          setTitle(c.title);
+        }
+        const history = msgsRef.current;
+        await push({ id: newId(), conversationId: cid, role: "user", content: text, createdAt: Date.now(), tool: null });
+
+        setState("processing");
+        const res = await agent.handle(text, history, setState);
+        await reply(cid, res.text, res.tool);
+      } catch (e) {
+        console.warn("[useConversation] send failed:", e);
+        setState("error");
+      } finally {
+        busy.current = false;
       }
-      const history = msgsRef.current;
-      await push({ id: newId(), conversationId: cid, role: "user", content: text, createdAt: Date.now(), tool: null });
-      const res = await agent.handle(text, history, setState);
-      await reply(cid, res.text, res.tool);
-    } catch {
-      setState("error");
-    } finally {
-      busy.current = false;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [convId, settings.autoPlayback, speak]);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [convId, settings.autoPlayback, speak]
+  );
 
-  const resolveTool = useCallback(async (messageId: string, approved: boolean) => {
-    const msg = msgsRef.current.find((m) => m.id === messageId);
-    if (!msg?.tool || !convId || busy.current) return;
-    busy.current = true;
-    try {
-      const res = await agent.resolveConfirmation(msg.tool, approved, setState);
-      const updated = res.tool!;
-      setMessages((cur) => cur.map((m) => (m.id === messageId ? { ...m, tool: updated } : m)));
-      await repo.updateMessageTool(messageId, updated);
-      await reply(convId, res.text, null);
-    } catch {
-      setState("error");
-    } finally {
-      busy.current = false;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [convId, settings.autoPlayback, speak]);
+  const resolveTool = useCallback(
+    async (messageId: string, approved: boolean) => {
+      const msg = msgsRef.current.find((m) => m.id === messageId);
+      if (!msg?.tool || !convId || busy.current) return;
+      busy.current = true;
 
-  return { convId, title, messages, state, setState, speakingId, loading, send, resolveTool, speak, stopSpeaking };
+      try {
+        const res = await agent.resolveConfirmation(msg.tool, approved, setState);
+        const updated = res.tool!;
+        setMessages((cur) => cur.map((m) => (m.id === messageId ? { ...m, tool: updated } : m)));
+        await repo.updateMessageTool(messageId, updated);
+        await reply(convId, res.text, null);
+      } catch (e) {
+        console.warn("[useConversation] resolveTool failed:", e);
+        setState("error");
+      } finally {
+        busy.current = false;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [convId, settings.autoPlayback, speak]
+  );
+
+  const retry = useCallback(
+    async (messageId: string) => {
+      const msg = msgsRef.current.find((m) => m.id === messageId);
+      if (msg && msg.role === "user") {
+        await send(msg.content);
+      }
+    },
+    [send]
+  );
+
+  return {
+    convId,
+    title,
+    messages,
+    state,
+    setState,
+    speakingId,
+    loading,
+    send,
+    retry,
+    resolveTool,
+    speak,
+    stopSpeaking,
+  };
 }

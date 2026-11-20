@@ -30,7 +30,59 @@ class AIEngine:
         if re.search(r"\b(what time|current time|the time|what's the date|what day is it|tell me the time)\b", l):
             return ("get_time", {}, False, "Device clock")
 
-        # 2. Reminder
+        # 2. Flashlight / Torch
+        if re.search(r"\b(turn on flashlight|turn on torch|flashlight on|torch on|enable flashlight)\b", l):
+            return ("device_control", {"setting": "flashlight", "value": "on"}, False, "Turn on flashlight")
+        if re.search(r"\b(turn off flashlight|turn off torch|flashlight off|torch off|disable flashlight)\b", l):
+            return ("device_control", {"setting": "flashlight", "value": "off"}, False, "Turn off flashlight")
+
+        # 3. Battery status
+        if re.search(r"\b(battery|battery level|battery percentage|battery status|how much battery|check battery)\b", l):
+            return ("device_control", {"setting": "battery", "value": "check"}, False, "Check battery status")
+
+        # 4. Volume
+        vol_match = re.search(r"(?:set\s+volume\s+to|volume\s+to)\s+(\d+)%?", l)
+        if vol_match:
+            v = vol_match.group(1)
+            return ("device_control", {"setting": "volume", "value": v}, False, f"Set volume to {v}%")
+
+        # 5. Calling
+        call_match = re.search(r"^(?:call|dial|phone)\s+([a-zA-Z0-9\s+]+)$", t, re.IGNORECASE)
+        if call_match:
+            contact = call_match.group(1).strip()
+            return ("call_contact", {"contact_name": contact}, True, f"Call {contact}")
+
+        # 6. High-Priority WhatsApp & Messaging Commands
+        open_and_send_match = re.search(r"^(?:open\s+whatsapp\s+(?:and\s+)?send\s+([a-zA-Z0-9]+)\s+(?:a\s+)?(.+?)(?:\s+message)?[\.\?!]?)$", t, re.IGNORECASE)
+        if open_and_send_match:
+            recipient = open_and_send_match.group(1).capitalize()
+            body = open_and_send_match.group(2).strip()
+            if body.lower().endswith(" message"):
+                body = body[:-8].strip()
+            return ("draft_message", {"recipient": recipient, "body": body}, True, f"WhatsApp to {recipient}: \"{body}\"")
+
+        send_via_wa_match = re.search(r"^(?:send\s+([a-zA-Z0-9]+)\s+(?:a\s+)?(.+?)(?:\s+message)?\s+(?:on|via)\s+whatsapp[\.\?!]?)$", t, re.IGNORECASE)
+        if send_via_wa_match:
+            recipient = send_via_wa_match.group(1).capitalize()
+            body = send_via_wa_match.group(2).strip()
+            if body.lower().endswith(" message"):
+                body = body[:-8].strip()
+            return ("draft_message", {"recipient": recipient, "body": body}, True, f"WhatsApp to {recipient}: \"{body}\"")
+
+        send_a_msg_match = re.search(r"^(?:send\s+([a-zA-Z0-9]+)\s+a\s+(.+?)\s+message[\.\?!]?)$", t, re.IGNORECASE)
+        if send_a_msg_match:
+            recipient = send_a_msg_match.group(1).capitalize()
+            body = send_a_msg_match.group(2).strip()
+            return ("draft_message", {"recipient": recipient, "body": body}, True, f"Message to {recipient}: \"{body}\"")
+
+        # 7. App Launch (evaluated after messaging to avoid greedily swallowing 'Open WhatsApp and send...')
+        open_app_match = re.search(r"^(?:open|launch|start)\s+([a-zA-Z0-9\s]+?)[\.\?!]?$", t, re.IGNORECASE)
+        if open_app_match:
+            candidate = open_app_match.group(1).strip()
+            if " and " not in candidate.lower() and candidate.lower() not in ["calendar", "schedule", "agenda", "reminders"]:
+                return ("open_app", {"app_name": candidate}, False, f"Open {candidate}")
+
+        # 8. Reminder
         remind_match = re.search(r"remind me (?:to )?(.+?)(?:\s+(?:at|by|on|tomorrow|tonight|in)\s+(.+))?$", t, re.IGNORECASE)
         if remind_match:
             task = remind_match.group(1).strip()
@@ -42,8 +94,8 @@ class AIEngine:
                 f"{task.capitalize()} · {time_spec}"
             )
 
-        # 3. Message / WhatsApp Draft
-        msg_match = re.search(r"(?:whatsapp|message|text|send message to|draft to)\s+([a-zA-Z]+)(?:\s+(?:saying|that|with text)?\s*[:,-]?\s*(.+))?", t, re.IGNORECASE)
+        # 9. Generic Message / WhatsApp Draft
+        msg_match = re.search(r"(?:whatsapp|message|text|send message to|draft to)\s+([a-zA-Z0-9]+)(?:\s+(?:saying|that|with text)?\s*[:,-]?\s*(.+))?", t, re.IGNORECASE)
         if msg_match:
             recipient = msg_match.group(1).capitalize()
             body = msg_match.group(2).strip() if msg_match.group(2) else f"Hi {recipient}, checking in with you."

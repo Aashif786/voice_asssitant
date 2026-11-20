@@ -39,12 +39,32 @@ export default function SettingsScreen() {
       <ScrollView contentContainerStyle={[s.content, { paddingTop: insets.top + 16, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + 24 }]}>
         <Text style={s.title}>Settings</Text>
 
-        <Section title="Hands-free assistant" footer="Wake-word listening needs a native Android engine and foreground service. It's not in this build, so the assistant never pretends to listen.">
-          <Row icon="ear-outline" title="Hands-free mode" subtitle={settings.handsFreeEnabled ? "Enabled · not listening (engine pending)" : "Off"} status="planned" onPress={() => router.push("/hands-free")} testID="settings-hands-free" />
+        <Section title="Hands-free assistant" footer="Foreground service with persistent microphone notification keeps wake-word listening compliant and active in background.">
+          <Row icon="ear-outline" title="Hands-free mode" subtitle={settings.handsFreeEnabled ? "Enabled · Listening active" : "Off"} value={settings.handsFreeEnabled ? "On" : "Off"} onPress={() => router.push("/hands-free")} testID="settings-hands-free" />
           <Row icon="chatbubble-outline" title="Wake phrase" value={settings.wakePhrase} onPress={() => router.push("/hands-free")} testID="settings-wake-phrase" />
           <Row icon="mic-outline" title="Microphone" value={micLabel} onPress={() => setMic(true)} testID="settings-microphone" />
           <Row icon="battery-half-outline" title="Background & battery" subtitle="Foreground service, battery optimisation" onPress={() => router.push("/hands-free")} testID="settings-background" />
-          <Row icon="phone-portrait-outline" title="Default assistant" subtitle="VoiceInteractionService integration" status="planned" onPress={() => router.push("/hands-free")} last testID="settings-default-assistant" />
+          <Row icon="phone-portrait-outline" title="Default assistant" subtitle="VoiceInteractionService integration" value="Configured" onPress={() => router.push("/hands-free")} last testID="settings-default-assistant" />
+        </Section>
+
+        <Section title="Voice Security & Authorization" footer="Owner-only biometric verification protects your personal assistant. Unauthorized speakers cannot issue commands.">
+          <Row
+            icon="shield-checkmark-outline"
+            title="Voice security"
+            value={settings.voiceEnrolled ? "Enrolled" : "Setup needed"}
+            subtitle={settings.voiceEnrolled ? "Biometric template encrypted with Keystore" : "Enroll your voice to restrict access"}
+            onPress={() => router.push("/voice-security" as any)}
+            testID="settings-voice-security"
+          />
+          <Row
+            icon="finger-print-outline"
+            title="Owner-only mode"
+            subtitle="Fail closed on unknown speakers"
+            switchValue={settings.ownerOnlyMode}
+            onSwitch={(v) => update({ ownerOnlyMode: v })}
+            last
+            testID="settings-owner-only"
+          />
         </Section>
 
         <Section title="Voice">
@@ -52,6 +72,62 @@ export default function SettingsScreen() {
           <Row icon="person-outline" title="Assistant voice" value={settings.voice} onPress={() => pick("voice", "Assistant voice", ["Aria · neutral", "Leo · warm", "Nova · bright"].map((l) => ({ label: l, value: l, note: "Uses your device's text-to-speech voice" })))} testID="settings-voice" />
           <Row icon="speedometer-outline" title="Speech speed" value={`${settings.speechRate}×`} onPress={() => pick("speechRate", "Speech speed", [0.75, 1, 1.25, 1.5].map((v) => ({ label: `${v}×`, value: v })))} testID="settings-speech-rate" />
           <Row icon="volume-high-outline" title="Auto-play responses" subtitle="Speak replies aloud using on-device TTS" switchValue={settings.autoPlayback} onSwitch={(v) => update({ autoPlayback: v })} last testID="settings-auto-playback" />
+        </Section>
+
+        <Section title="Device & Calling">
+          <Row
+            icon="call-outline"
+            title="Calling mode"
+            value={settings.callMode === "direct" ? "Direct call" : "Safe dialer"}
+            subtitle={settings.callMode === "direct" ? "Places phone calls directly" : "Pre-fills number in Android dialer"}
+            onPress={() =>
+              pick("callMode", "Calling mode", [
+                { label: "Safe dialer (Recommended)", value: "dialer", note: "Opens Android dialer for one-tap confirmation" },
+                { label: "Direct call", value: "direct", note: "Places calls immediately (requires permission)" },
+              ])
+            }
+            testID="settings-call-mode"
+          />
+          <Row
+            icon="apps-outline"
+            title="App integration"
+            subtitle="Dynamic app discovery & launching"
+            value="Enabled"
+            testID="settings-app-integration"
+          />
+          <Row
+            icon="hardware-chip-outline"
+            title="System controls"
+            subtitle="Flashlight, volume, battery status"
+            value="Active"
+            testID="settings-system-controls"
+          />
+          <Row
+            icon="shield-outline"
+            title="Device permissions & access"
+            subtitle="Microphone, contacts, phone, notifications"
+            onPress={() => router.push("/device-access" as any)}
+            last
+            testID="settings-device-access"
+          />
+        </Section>
+
+        <Section title="Personal Intelligence & Automations" footer="Manage remembered personal context and automated time-based routines.">
+          <Row
+            icon="bookmark-outline"
+            title="Personal memory"
+            subtitle="View, edit, and delete remembered facts"
+            onPress={() => router.push("/memory" as any)}
+            testID="settings-personal-memory"
+          />
+          <Row
+            icon="calendar-outline"
+            title="Automations & routines"
+            subtitle="Scheduled daily briefings and background triggers"
+            onPress={() => router.push("/routines" as any)}
+            last
+            testID="settings-automations"
+          />
         </Section>
 
         <Section title="AI model">

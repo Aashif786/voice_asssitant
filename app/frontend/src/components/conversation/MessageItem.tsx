@@ -13,6 +13,7 @@ const STATUS_TEXT: Record<ToolCall["status"], string> = {
   completed: "Done",
   cancelled: "Cancelled",
   unavailable: "Not executed: integration pending",
+  pending_disambiguation: "Select contact",
 };
 
 function ToolCard({ tool, onResolve, id }: { tool: ToolCall; onResolve: (ok: boolean) => void; id: string }) {

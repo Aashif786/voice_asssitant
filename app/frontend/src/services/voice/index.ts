@@ -10,21 +10,24 @@ import {
   nativeInference,
   type WhisperContext,
 } from "@/src/services/native";
+import { AndroidAssistant } from "@/modules/android-assistant";
+import { modelService } from "@/src/services/models/ModelService";
 
 import type { SpeechRecognitionEngine, TranscriptEvent } from "./SpeechRecognition.interface";
 import type { SpeechSynthesisEngine } from "./SpeechSynthesis.interface";
-import type { WakeWordEngine, WakeWordStatus } from "./WakeWordEngine.interface";
+import type { WakeWordEngine } from "./WakeWordEngine.interface";
+import { nativeWakeWordEngine } from "./NativeWakeWordEngine";
 
 const SAMPLE_RATE = 16000; // Whisper expects 16 kHz mono
 const BYTES_PER_SEC = SAMPLE_RATE * 2; // PCM16
-const MAX_SECONDS = 30; // Whisper's native window; longer audio is trimmed to the latest 30 s
+const MAX_SECONDS = 30; // Whisper's native window
 const PARTIAL_EVERY_MS = 1500;
-const MIN_AUDIO_BYTES = BYTES_PER_SEC / 2; // need ~0.5 s before transcribing
+const MIN_AUDIO_BYTES = BYTES_PER_SEC / 2;
 
 /**
- * On-device Whisper STT (whisper.rn >= 0.7). Raw mic PCM is streamed with
- * @fugood/react-native-audio-pcm-stream, re-transcribed periodically for live partials,
- * and transcribed once more on stop for the final text. Nothing leaves the device.
+ * On-device Whisper STT (whisper.rn >= 0.7).
+ * Raw mic PCM is streamed with @fugood/react-native-audio-pcm-stream,
+ * re-transcribed periodically for live partials, and transcribed on stop for the final text.
  */
 class WhisperSpeechRecognition implements SpeechRecognitionEngine {
   readonly name = "Whisper (on-device)";
@@ -52,13 +55,13 @@ class WhisperSpeechRecognition implements SpeechRecognitionEngine {
   }
 
   isAvailable(): boolean {
-    return nativeInference.whisperAvailable && this.modelPath !== null;
+    return nativeInference.whisperAvailable && Boolean(this.modelPath);
   }
 
   reason(): string | null {
     const missing = missingNativeReason("whisper");
     if (missing) return missing;
-    if (!this.modelPath) return "Download a speech model in the Models tab to enable voice input.";
+    if (!this.modelPath) return "Speech model not downloaded. Select and download one in the Models tab.";
     return null;
   }
 
@@ -90,7 +93,6 @@ class WhisperSpeechRecognition implements SpeechRecognitionEngine {
       const buf = Buffer.from(b64, "base64");
       this.chunks.push(buf);
       this.totalBytes += buf.length;
-      // Keep only the most recent MAX_SECONDS of audio.
       const max = BYTES_PER_SEC * MAX_SECONDS;
       while (this.totalBytes - (this.chunks[0]?.length ?? 0) >= max && this.chunks.length > 1) {
         this.totalBytes -= this.chunks.shift()!.length;
@@ -101,7 +103,6 @@ class WhisperSpeechRecognition implements SpeechRecognitionEngine {
   private snapshot(): ArrayBuffer | null {
     if (this.totalBytes < MIN_AUDIO_BYTES) return null;
     const merged = Buffer.concat(this.chunks, this.totalBytes);
-    // Copy into a standalone, even-length ArrayBuffer (PCM16 samples are 2 bytes).
     const len = merged.length - (merged.length % 2);
     const out = new ArrayBuffer(len);
     new Uint8Array(out).set(merged.subarray(0, len));
@@ -134,7 +135,7 @@ class WhisperSpeechRecognition implements SpeechRecognitionEngine {
     const why = this.reason();
     if (why) return { ok: false, reason: why };
     const ready = await this.ensureContext();
-    if (!ready || !this.ctx) return { ok: false, reason: "Could not load the speech model. Try deleting and re-downloading it." };
+    if (!ready || !this.ctx) return { ok: false, reason: "Could not load speech model. Re-download it in Models." };
     if (!LiveAudioStream) return { ok: false, reason: missingNativeReason("whisper") ?? "Microphone stream unavailable." };
 
     this.language = language.startsWith("en") ? "en" : language.slice(0, 2).toLowerCase();
@@ -148,7 +149,7 @@ class WhisperSpeechRecognition implements SpeechRecognitionEngine {
         sampleRate: SAMPLE_RATE,
         channels: 1,
         bitsPerSample: 16,
-        audioSource: 6, // VOICE_RECOGNITION on Android
+        audioSource: 6, // VOICE_RECOGNITION
         bufferSize: 4096,
         wavFile: "",
       });
@@ -169,7 +170,6 @@ class WhisperSpeechRecognition implements SpeechRecognitionEngine {
     return { ok: true };
   }
 
-  /** Stops the mic and resolves once the final transcript has been emitted. */
   async stop(): Promise<void> {
     if (!this.listening) return;
     this.listening = false;
@@ -188,7 +188,6 @@ class WhisperSpeechRecognition implements SpeechRecognitionEngine {
     this.totalBytes = 0;
   }
 
-  /** Stops the mic and discards audio without transcribing. */
   async cancel(): Promise<void> {
     this.listening = false;
     this.onTranscript = null;
@@ -205,31 +204,33 @@ class WhisperSpeechRecognition implements SpeechRecognitionEngine {
 }
 
 /**
- * Companion Backend Speech Recognition.
- * On Web: uses browser native SpeechRecognition / webkitSpeechRecognition.
- * On Native (Expo Go): records audio with expo-audio and POSTs to /api/voice/transcribe.
+ * System Speech Recognition (built-in Android SpeechRecognizer / Web Speech API).
+ * Zero model download required, fully native.
  */
-class BackendSpeechRecognition implements SpeechRecognitionEngine {
-  readonly name = "Companion Backend / Web Speech";
+class SystemSpeechRecognition implements SpeechRecognitionEngine {
+  readonly name = "System Speech Recognizer";
+
   private listening = false;
-  private webRecognition: any = null;
   private lastText = "";
   private onTranscript: ((e: TranscriptEvent) => void) | null = null;
-  private recorder: any = null;
+  private subPartial: any = null;
+  private subFinal: any = null;
+  private subError: any = null;
+  private webRecognition: any = null;
 
-  setModel(_path: string | null): void {
-    // Backend/Web manages models
-  }
+  setModel(_path: string | null): void {}
 
   isAvailable(): boolean {
-    if (nativeInference.whisperAvailable) return true;
-    if (Platform.OS === "web") return true;
-    return isBackendConfigured();
+    if (Platform.OS === "android") return true;
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      return Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+    }
+    return false;
   }
 
   reason(): string | null {
     if (this.isAvailable()) return null;
-    return "Connect the companion backend (EXPO_PUBLIC_BACKEND_URL) or install the development build.";
+    return "System speech recognizer is not available on this platform.";
   }
 
   async start(language: string, onTranscript: (e: TranscriptEvent) => void): Promise<{ ok: boolean; reason?: string }> {
@@ -237,7 +238,7 @@ class BackendSpeechRecognition implements SpeechRecognitionEngine {
     this.lastText = "";
     this.onTranscript = onTranscript;
 
-    // 1. Web Native Speech API
+    // Web platform
     if (Platform.OS === "web" && typeof window !== "undefined") {
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRec) {
@@ -264,33 +265,130 @@ class BackendSpeechRecognition implements SpeechRecognitionEngine {
             }
           };
 
-          rec.onerror = (e: any) => {
-            console.warn("[web-speech] error", e);
-          };
-
-          rec.onend = () => {
-            if (this.listening) {
-              try {
-                rec.start();
-              } catch {}
-            }
-          };
-
           rec.start();
           this.webRecognition = rec;
           return { ok: true };
         } catch (e: any) {
-          console.warn("[web-speech] start failed", e);
+          this.listening = false;
+          return { ok: false, reason: e?.message || "Web Speech initialization failed." };
         }
       }
     }
 
-    // 2. Native Expo Go Audio Recording fallback
+    // Android native platform
+    if (Platform.OS === "android" && AndroidAssistant.isAvailable()) {
+      this.subPartial?.remove();
+      this.subFinal?.remove();
+      this.subError?.remove();
+
+      this.subPartial = AndroidAssistant.onSpeechPartial((text) => {
+        if (!this.listening) return;
+        this.lastText = text;
+        this.onTranscript?.({ text, isFinal: false });
+      });
+
+      this.subFinal = AndroidAssistant.onSpeechFinal((text) => {
+        if (!this.listening) return;
+        this.lastText = text;
+        this.onTranscript?.({ text, isFinal: true });
+      });
+
+      this.subError = AndroidAssistant.onSpeechError((err) => {
+        console.warn("[SystemSpeech] error:", err);
+      });
+
+      const res = await AndroidAssistant.startSystemSpeech(language.startsWith("en") ? "en-US" : language);
+      if (res.ok) {
+        return { ok: true };
+      }
+    }
+
+    return { ok: true };
+  }
+
+  async stop(): Promise<void> {
+    if (!this.listening) return;
+    this.listening = false;
+
+    if (this.webRecognition) {
+      try {
+        this.webRecognition.stop();
+      } catch {}
+      this.webRecognition = null;
+    }
+
+    if (Platform.OS === "android" && AndroidAssistant.isAvailable()) {
+      await AndroidAssistant.stopSystemSpeech();
+    }
+
+    if (this.lastText) {
+      this.onTranscript?.({ text: this.lastText, isFinal: true });
+    }
+    this.cleanupListeners();
+  }
+
+  async cancel(): Promise<void> {
+    this.listening = false;
+    this.lastText = "";
+
+    if (this.webRecognition) {
+      try {
+        this.webRecognition.abort();
+      } catch {}
+      this.webRecognition = null;
+    }
+
+    if (Platform.OS === "android" && AndroidAssistant.isAvailable()) {
+      await AndroidAssistant.cancelSystemSpeech();
+    }
+    this.cleanupListeners();
+  }
+
+  private cleanupListeners() {
+    this.subPartial?.remove();
+    this.subFinal?.remove();
+    this.subError?.remove();
+    this.subPartial = null;
+    this.subFinal = null;
+    this.subError = null;
+    this.onTranscript = null;
+  }
+}
+
+/**
+ * Companion Backend Speech Recognition.
+ * Records audio using expo-audio and POSTs to /api/voice/transcribe.
+ */
+class BackendSpeechRecognition implements SpeechRecognitionEngine {
+  readonly name = "Companion Backend STT";
+  private listening = false;
+  private lastText = "";
+  private onTranscript: ((e: TranscriptEvent) => void) | null = null;
+  private recorder: any = null;
+
+  setModel(_path: string | null): void {}
+
+  isAvailable(): boolean {
+    return isBackendConfigured();
+  }
+
+  reason(): string | null {
+    if (this.isAvailable()) return null;
+    return "Companion backend server is not connected (EXPO_PUBLIC_BACKEND_URL).";
+  }
+
+  async start(_language: string, onTranscript: (e: TranscriptEvent) => void): Promise<{ ok: boolean; reason?: string }> {
+    this.listening = true;
+    this.lastText = "";
+    this.onTranscript = onTranscript;
+
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { AudioRecorder, RecordingPresets } = require("expo-audio");
-      this.recorder = new AudioRecorder(RecordingPresets.HIGH_QUALITY);
-      this.recorder.record();
+      const { AudioModule, RecordingPresets } = require("expo-audio");
+      const recorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      this.recorder = recorder;
       return { ok: true };
     } catch (e: any) {
       this.listening = false;
@@ -302,20 +400,6 @@ class BackendSpeechRecognition implements SpeechRecognitionEngine {
     if (!this.listening) return;
     this.listening = false;
 
-    // Web Speech stop
-    if (this.webRecognition) {
-      try {
-        this.webRecognition.stop();
-      } catch {}
-      this.webRecognition = null;
-      if (this.lastText) {
-        this.onTranscript?.({ text: this.lastText, isFinal: true });
-      }
-      this.onTranscript = null;
-      return;
-    }
-
-    // Native audio recorder stop & upload to backend
     if (this.recorder) {
       try {
         await this.recorder.stop();
@@ -354,12 +438,6 @@ class BackendSpeechRecognition implements SpeechRecognitionEngine {
     this.listening = false;
     this.lastText = "";
     this.onTranscript = null;
-    if (this.webRecognition) {
-      try {
-        this.webRecognition.abort();
-      } catch {}
-      this.webRecognition = null;
-    }
     if (this.recorder) {
       try {
         await this.recorder.stop();
@@ -369,71 +447,103 @@ class BackendSpeechRecognition implements SpeechRecognitionEngine {
   }
 }
 
-/** Hybrid engine delegating to native Whisper when present, or Companion Backend / Web speech. */
-class HybridSpeechRecognition implements SpeechRecognitionEngine {
+/**
+ * Intelligent SpeechRecognition router that routes to the user's selected STT model:
+ * - "stt-system": SystemSpeechRecognition
+ * - "stt-whisper-base" | "stt-whisper-tiny": WhisperSpeechRecognition
+ * - "stt-companion": BackendSpeechRecognition
+ */
+class DynamicSpeechRecognition implements SpeechRecognitionEngine {
   private whisper = new WhisperSpeechRecognition();
+  private system = new SystemSpeechRecognition();
   private backend = new BackendSpeechRecognition();
-
-  private active(): SpeechRecognitionEngine {
-    if (nativeInference.whisperAvailable) return this.whisper;
-    return this.backend;
-  }
-
-  get name(): string {
-    return this.active().name;
-  }
+  private activeModelId: string | null = null;
 
   setModel(path: string | null): void {
     this.whisper.setModel(path);
-    this.backend.setModel(path);
+  }
+
+  setActiveModelId(id: string | null): void {
+    this.activeModelId = id;
+  }
+
+  private resolveEngine(): { engine: SpeechRecognitionEngine | null; error?: string } {
+    // 1. Check if an explicit model ID is configured
+    const id = this.activeModelId;
+    if (!id) {
+      // If none selected, default to system speech if available, or ask user to configure
+      if (this.system.isAvailable()) {
+        return { engine: this.system };
+      }
+      return { engine: null, error: "No Speech-to-Text model configured. Open Models tab to choose one." };
+    }
+
+    if (id === "stt-system") {
+      return { engine: this.system };
+    }
+    if (id === "stt-whisper-base" || id === "stt-whisper-tiny") {
+      if (!this.whisper.isAvailable()) {
+        return { engine: null, error: "The selected Whisper model is not downloaded. Please download it in the Models tab." };
+      }
+      return { engine: this.whisper };
+    }
+    if (id === "stt-companion") {
+      if (!this.backend.isAvailable()) {
+        return { engine: null, error: "Companion backend is not configured for remote STT." };
+      }
+      return { engine: this.backend };
+    }
+
+    return { engine: this.system };
+  }
+
+  get name(): string {
+    const { engine } = this.resolveEngine();
+    return engine?.name ?? "Speech Recognition (Unconfigured)";
   }
 
   isAvailable(): boolean {
-    return this.active().isAvailable();
+    const { engine } = this.resolveEngine();
+    return engine !== null && engine.isAvailable();
   }
 
   reason(): string | null {
-    return this.active().reason();
+    const { engine, error } = this.resolveEngine();
+    if (error) return error;
+    return engine?.reason() ?? null;
   }
 
-  start(language: string, onTranscript: (e: TranscriptEvent) => void): Promise<{ ok: boolean; reason?: string }> {
-    return this.active().start(language, onTranscript);
+  async start(language: string, onTranscript: (e: TranscriptEvent) => void): Promise<{ ok: boolean; reason?: string }> {
+    // Sync current model selection from state
+    try {
+      const state = await modelService.loadState();
+      this.activeModelId = state.selectedStt;
+      if (state.selectedStt?.startsWith("stt-whisper")) {
+        this.whisper.setModel(modelService.pathFor(state.selectedStt));
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const { engine, error } = this.resolveEngine();
+    if (!engine) {
+      return { ok: false, reason: error ?? "Speech recognition is unavailable." };
+    }
+    return engine.start(language, onTranscript);
   }
 
-  stop(): Promise<void> {
-    return this.active().stop();
-  }
-
-  cancel(): Promise<void> {
-    return this.active().cancel();
-  }
-}
-
-export const speechRecognition: SpeechRecognitionEngine = new HybridSpeechRecognition();
-
-/** Wake-word detection is not shipped yet (needs a native engine + Android foreground service). */
-class PendingWakeWordEngine implements WakeWordEngine {
-  readonly name = "Wake word (not installed)";
-  private status: WakeWordStatus = "not_installed";
-
-  getStatus(): WakeWordStatus {
-    return this.status;
-  }
-  isAvailable(): boolean {
-    return false;
-  }
-  async start(): Promise<{ ok: boolean; reason?: string }> {
-    return { ok: false, reason: "Wake-word engine is not installed in this build yet." };
-  }
   async stop(): Promise<void> {
-    this.status = "not_installed";
+    const { engine } = this.resolveEngine();
+    if (engine) await engine.stop();
   }
-  onDetected(): () => void {
-    return () => {};
+
+  async cancel(): Promise<void> {
+    const { engine } = this.resolveEngine();
+    if (engine) await engine.cancel();
   }
 }
 
-/** Real native TTS via expo-speech. */
+/** Native TTS via expo-speech with safety timeout. */
 class ExpoSpeechSynthesis implements SpeechSynthesisEngine {
   readonly name = "System TTS (on-device)";
   readonly isSimulated = false;
@@ -441,15 +551,27 @@ class ExpoSpeechSynthesis implements SpeechSynthesisEngine {
   speak(text: string, { rate }: { rate: number; voice: string }): Promise<void> {
     this.stop();
     return new Promise<void>((resolve) => {
+      let resolved = false;
+      const done = () => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timeoutId);
+          resolve();
+        }
+      };
+
+      // Safety timeout: never let speech synthesis keep assistant stuck in "speaking" state
+      const timeoutId = setTimeout(done, 15000);
+
       try {
         Speech.speak(text, {
           rate: rate || 1.0,
-          onDone: () => resolve(),
-          onStopped: () => resolve(),
-          onError: () => resolve(),
+          onDone: done,
+          onStopped: done,
+          onError: done,
         });
       } catch {
-        resolve();
+        done();
       }
     });
   }
@@ -463,9 +585,9 @@ class ExpoSpeechSynthesis implements SpeechSynthesisEngine {
   }
 }
 
-export const wakeWordEngine: WakeWordEngine = new PendingWakeWordEngine();
+export const speechRecognition: SpeechRecognitionEngine = new DynamicSpeechRecognition();
+export const wakeWordEngine: WakeWordEngine = nativeWakeWordEngine;
 export const speechSynthesis: SpeechSynthesisEngine = new ExpoSpeechSynthesis();
 
-/** Whether real on-device speech recognition can run right now. */
 export const sttAvailable = () => speechRecognition.isAvailable();
 export { nativeInference };

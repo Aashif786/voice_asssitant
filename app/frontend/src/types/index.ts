@@ -10,9 +10,15 @@ export type ToolName =
   | "draft_message"
   | "read_calendar"
   | "search_files"
-  | "web_search";
+  | "web_search"
+  | "open_app"
+  | "call_contact"
+  | "device_control"
+  | "daily_briefing"
+  | "manage_memory"
+  | "read_notifications";
 
-export type ToolStatus = "pending_confirmation" | "completed" | "cancelled" | "unavailable";
+export type ToolStatus = "pending_confirmation" | "completed" | "cancelled" | "unavailable" | "pending_disambiguation";
 
 export interface ToolCall {
   tool: ToolName;

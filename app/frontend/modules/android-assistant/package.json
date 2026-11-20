@@ -1,0 +1,14 @@
+{
+  "name": "android-assistant",
+  "version": "1.0.0",
+  "description": "Native Android OS device control, foreground service and voice security module for Offline Voice AI Assistant",
+  "main": "index.ts",
+  "types": "index.ts",
+  "scripts": {},
+  "keywords": ["expo", "expo-module", "android-assistant"],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

@@ -54,6 +54,48 @@ async def list_tools():
             "mode": "ONLINE",
             "requiresConfirmation": True,
             "params": ["query"]
+        },
+        {
+            "name": "open_app",
+            "label": "App launcher",
+            "mode": "OFFLINE",
+            "requiresConfirmation": False,
+            "params": ["app_name"]
+        },
+        {
+            "name": "call_contact",
+            "label": "Phone call",
+            "mode": "OFFLINE",
+            "requiresConfirmation": True,
+            "params": ["contact_name", "mode"]
+        },
+        {
+            "name": "device_control",
+            "label": "Device control",
+            "mode": "OFFLINE",
+            "requiresConfirmation": False,
+            "params": ["setting", "value"]
+        },
+        {
+            "name": "daily_briefing",
+            "label": "Daily briefing",
+            "mode": "OFFLINE",
+            "requiresConfirmation": False,
+            "params": []
+        },
+        {
+            "name": "manage_memory",
+            "label": "Personal memory",
+            "mode": "OFFLINE",
+            "requiresConfirmation": False,
+            "params": ["action", "fact"]
+        },
+        {
+            "name": "read_notifications",
+            "label": "Notifications",
+            "mode": "OFFLINE",
+            "requiresConfirmation": False,
+            "params": ["limit"]
         }
     ]
 
