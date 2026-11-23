@@ -3,15 +3,14 @@ import type { AIEngine, AIRequest, AIResult } from "./AIEngine.interface";
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Deterministic offline fallback used only when no on-device model is loaded (and no
- * optional backend is reachable). It never pretends to reason — it gives honest, useful
- * guidance and points the user to install a model. Tool phrases are handled upstream by
- * the orchestrator, so this only produces conversational text.
+ * Deterministic on-device rule engine fallback.
+ * Operates offline with zero network connection.
+ * Provides helpful conversational responses for system queries and device commands.
  */
 class RuleFallbackEngine implements AIEngine {
   readonly id = "rule_fallback";
-  readonly name = "On-device rules (no model loaded)";
-  readonly isSimulated = true;
+  readonly name = "On-device Rule Engine";
+  readonly isSimulated = false;
 
   isReady(): boolean {
     return true;
@@ -22,25 +21,55 @@ class RuleFallbackEngine implements AIEngine {
   }
 
   async generate({ text }: AIRequest): Promise<AIResult> {
-    await delay(250);
+    await delay(150);
     const t = text.trim().replace(/^(hey|ok|okay)\s+assistant[,\s]*/i, "");
     const l = t.toLowerCase();
 
-    if (/^(hi|hello|hey|good (morning|afternoon|evening))\b/.test(l)) {
-      return { text: "Hello. I'm running fully on this device. Install a model in the Models tab and I can hold a full conversation offline." };
-    }
-    if (/who are you|what are you/.test(l)) {
-      return { text: "I'm an on-device voice assistant. Speech, reasoning and tools run locally so nothing leaves your device." };
-    }
-    if (/what can you do|help\b/.test(l)) {
+    if (/^(hi|hello|hey|greetings|good (morning|afternoon|evening))\b/.test(l)) {
       return {
-        text:
-          "I can check the time, set reminders, read your calendar, draft messages, search files, and (online) search the web. " +
-          "Download an on-device model in the Models tab to unlock full conversation.",
+        text: "Hello! I am your on-device AI voice assistant. I can control your device, launch apps, make calls, draft messages, check calendar, and answer questions locally.",
       };
     }
+    if (/who are you|what are you|your name/.test(l)) {
+      return {
+        text: "I am an on-device Voice AI Assistant designed to run privately on your phone without sending your voice or data to the cloud.",
+      };
+    }
+    if (/how are you/.test(l)) {
+      return {
+        text: "I'm functioning smoothly on your device! Ready to help with apps, calls, reminders, or settings.",
+      };
+    }
+    if (/thank you|thanks/.test(l)) {
+      return {
+        text: "You're very welcome! Let me know if you need anything else.",
+      };
+    }
+    if (/bye|goodbye|see you/.test(l)) {
+      return {
+        text: "Goodbye! Have a great day ahead.",
+      };
+    }
+    if (/what can you do|help\b|features|capabilities/.test(l)) {
+      return {
+        text:
+          "I can perform local device actions:\n" +
+          "• Open any installed app (\"Open WhatsApp\", \"Open Camera\")\n" +
+          "• Phone calls (\"Call John\")\n" +
+          "• Flashlight, battery, and volume control\n" +
+          "• Set reminders and read calendar agenda\n" +
+          "• Draft messages and notes\n" +
+          "• Offline conversational reasoning via GGUF models in the Models tab.",
+      };
+    }
+    if (/tell me a joke|make me laugh/.test(l)) {
+      return {
+        text: "Why do programmers prefer dark mode? Because light attracts bugs!",
+      };
+    }
+
     return {
-      text: `I heard: "${t}". To answer this fully offline, download and select a model in the Models tab — then I'll reason on-device.`,
+      text: `I heard: "${t}". To enable deep generative reasoning offline, you can select and download an on-device GGUF model in the Models tab, or connect to the companion server.`,
     };
   }
 

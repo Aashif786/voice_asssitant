@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { onDeviceLlama } from "@/src/services/ai/OnDeviceLlamaEngine";
-import { modelService, type ModelInfo, type ModelState } from "@/src/services/models/ModelService";
+import { isBackendConfigured } from "@/src/services/api";
+import { modelService, type ModelInfo, type ModelState, type ModelType } from "@/src/services/models/ModelService";
 import { speechRecognition } from "@/src/services/voice";
 
 type Ctx = {
@@ -20,17 +21,19 @@ type Ctx = {
   select: (id: string) => void;
   selectLlm: (id: string) => void;
   selectStt: (id: string | null) => void;
+  refreshCatalogue: () => Promise<void>;
+  discover: (query: string, type?: ModelType) => Promise<ModelInfo[]>;
 };
 
 const ModelsContext = createContext<Ctx | null>(null);
 
 export function ModelsProvider({ children }: { children: ReactNode }) {
+  const [models, setModels] = useState<ModelInfo[]>(() => modelService.catalogue());
   const [installed, setInstalled] = useState<string[]>([]);
   const [selectedLlmId, setSelectedLlmId] = useState<string | null>(null);
   const [selectedSttId, setSelectedSttId] = useState<string | null>(null);
   const [progress, setProgress] = useState<Record<string, number>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const models = modelService.catalogue();
 
   const loadLlama = useCallback(
     (id: string | null) => {
@@ -46,6 +49,7 @@ export function ModelsProvider({ children }: { children: ReactNode }) {
 
   const applySttSelection = useCallback(
     (sttId: string | null) => {
+      speechRecognition.setActiveModelId?.(sttId);
       if (!sttId) {
         speechRecognition.setModel(null);
         return;
@@ -60,14 +64,49 @@ export function ModelsProvider({ children }: { children: ReactNode }) {
     [models]
   );
 
+  const refreshCatalogue = useCallback(async () => {
+    try {
+      const updated = await modelService.syncFromBackend();
+      setModels(updated);
+      const state = await modelService.loadState();
+      setInstalled(state.installed);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const discover = useCallback(async (query: string, type?: ModelType): Promise<ModelInfo[]> => {
+    try {
+      const results = await modelService.discoverFromProvider(query, type);
+      setModels(modelService.catalogue());
+      return results;
+    } catch {
+      return [];
+    }
+  }, []);
+
   useEffect(() => {
-    // Load initial persisted state without triggering any auto-downloads
-    modelService.loadState().then((s) => {
+    modelService.loadState().then(async (s) => {
+      setModels(modelService.catalogue());
       setInstalled(s.installed);
       setSelectedLlmId(s.selectedLlm);
       setSelectedSttId(s.selectedStt);
       loadLlama(s.selectedLlm);
       applySttSelection(s.selectedStt);
+
+      // Auto-select defaults if nothing selected
+      const autoStt = s.selectedStt ?? "stt-system";
+      if (!s.selectedLlm) {
+        const defaultLlm = s.installed.find((id) => id.includes("qwen") || id.includes("smol")) ?? "qwen2.5-0.5b";
+        setSelectedLlmId(defaultLlm);
+        modelService.saveState({ selectedLlm: defaultLlm });
+        loadLlama(defaultLlm);
+      }
+      if (!s.selectedStt) {
+        setSelectedSttId(autoStt);
+        modelService.saveState({ selectedStt: autoStt });
+        applySttSelection(autoStt);
+      }
     });
   }, [loadLlama, applySttSelection]);
 
@@ -195,6 +234,8 @@ export function ModelsProvider({ children }: { children: ReactNode }) {
     select,
     selectLlm,
     selectStt,
+    refreshCatalogue,
+    discover,
   };
 
   return <ModelsContext.Provider value={value}>{children}</ModelsContext.Provider>;

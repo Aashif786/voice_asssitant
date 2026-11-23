@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.config import CORS_ORIGINS
@@ -27,8 +27,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# allow_credentials must be False while origins can be "*": the API uses no cookies or
-# auth credentials, and the wildcard + credentials combination is rejected by browsers.
+# Private Network Access (PNA) and CORS preflight handling for web and LAN clients
+@app.middleware("http")
+async def add_pna_and_cors_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        res = Response()
+        res.headers["Access-Control-Allow-Origin"] = "*"
+        res.headers["Access-Control-Allow-Methods"] = "*"
+        res.headers["Access-Control-Allow-Headers"] = "*"
+        res.headers["Access-Control-Allow-Private-Network"] = "true"
+        return res
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
+# Standard CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,

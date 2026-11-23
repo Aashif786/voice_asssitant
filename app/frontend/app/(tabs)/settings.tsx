@@ -21,7 +21,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { settings, update } = useSettings();
-  const { selected } = useModels();
+  const { selectedLlm, selectedStt } = useModels();
   const { perm, refresh } = useMicPermission();
   const [picker, setPicker] = useState<OptionPicker<any> | null>(null);
   const [mic, setMic] = useState(false);
@@ -39,15 +39,42 @@ export default function SettingsScreen() {
       <ScrollView contentContainerStyle={[s.content, { paddingTop: insets.top + 16, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + 24 }]}>
         <Text style={s.title}>Settings</Text>
 
-        <Section title="Hands-free assistant" footer="Foreground service with persistent microphone notification keeps wake-word listening compliant and active in background.">
-          <Row icon="ear-outline" title="Hands-free mode" subtitle={settings.handsFreeEnabled ? "Enabled · Listening active" : "Off"} value={settings.handsFreeEnabled ? "On" : "Off"} onPress={() => router.push("/hands-free")} testID="settings-hands-free" />
-          <Row icon="chatbubble-outline" title="Wake phrase" value={settings.wakePhrase} onPress={() => router.push("/hands-free")} testID="settings-wake-phrase" />
-          <Row icon="mic-outline" title="Microphone" value={micLabel} onPress={() => setMic(true)} testID="settings-microphone" />
-          <Row icon="battery-half-outline" title="Background & battery" subtitle="Foreground service, battery optimisation" onPress={() => router.push("/hands-free")} testID="settings-background" />
-          <Row icon="phone-portrait-outline" title="Default assistant" subtitle="VoiceInteractionService integration" value="Configured" onPress={() => router.push("/hands-free")} last testID="settings-default-assistant" />
+        {/* ── Voice & Listening ── */}
+        <Section title="Voice & Listening" footer="Foreground service with persistent microphone notification keeps wake-word listening compliant and active in background.">
+          <Row
+            icon="ear-outline"
+            title="Hands-free mode"
+            subtitle={settings.handsFreeEnabled ? "Enabled · Listening active" : "Off"}
+            value={settings.handsFreeEnabled ? "On" : "Off"}
+            onPress={() => router.push("/hands-free")}
+            testID="settings-hands-free"
+          />
+          <Row
+            icon="chatbubble-outline"
+            title="Wake phrase"
+            value={settings.wakePhrase}
+            onPress={() => router.push("/hands-free")}
+            testID="settings-wake-phrase"
+          />
+          <Row
+            icon="mic-outline"
+            title="Microphone access"
+            value={micLabel}
+            onPress={() => setMic(true)}
+            testID="settings-microphone"
+          />
+          <Row
+            icon="battery-half-outline"
+            title="Background & battery"
+            subtitle="Foreground service, battery optimisation"
+            onPress={() => router.push("/hands-free")}
+            last
+            testID="settings-background"
+          />
         </Section>
 
-        <Section title="Voice Security & Authorization" footer="Owner-only biometric verification protects your personal assistant. Unauthorized speakers cannot issue commands.">
+        {/* ── Security ── */}
+        <Section title="Security" footer="Owner-only biometric verification protects your personal assistant. Unauthorized speakers cannot issue commands.">
           <Row
             icon="shield-checkmark-outline"
             title="Voice security"
@@ -67,14 +94,45 @@ export default function SettingsScreen() {
           />
         </Section>
 
-        <Section title="Voice">
-          <Row icon="language-outline" title="Recognition language" value={settings.language} status="planned" onPress={() => pick("language", "Recognition language", ["English (US)", "English (India)", "Hindi", "Spanish", "German"].map((l) => ({ label: l, value: l })))} testID="settings-language" />
-          <Row icon="person-outline" title="Assistant voice" value={settings.voice} onPress={() => pick("voice", "Assistant voice", ["Aria · neutral", "Leo · warm", "Nova · bright"].map((l) => ({ label: l, value: l, note: "Uses your device's text-to-speech voice" })))} testID="settings-voice" />
-          <Row icon="speedometer-outline" title="Speech speed" value={`${settings.speechRate}×`} onPress={() => pick("speechRate", "Speech speed", [0.75, 1, 1.25, 1.5].map((v) => ({ label: `${v}×`, value: v })))} testID="settings-speech-rate" />
-          <Row icon="volume-high-outline" title="Auto-play responses" subtitle="Speak replies aloud using on-device TTS" switchValue={settings.autoPlayback} onSwitch={(v) => update({ autoPlayback: v })} last testID="settings-auto-playback" />
+        {/* ── AI & Models ── */}
+        <Section title="AI & Models">
+          <Row
+            icon="hardware-chip-outline"
+            title="Active LLM"
+            subtitle={selectedLlm ? `${selectedLlm.quantization} · ${selectedLlm.params}` : "No model selected · Tap to choose"}
+            value={selectedLlm?.name.split(" ").slice(0, 3).join(" ") ?? "None selected"}
+            onPress={() => router.push("/models")}
+            testID="settings-active-llm"
+          />
+          <Row
+            icon="mic-circle-outline"
+            title="Active STT"
+            subtitle={selectedStt ? `${selectedStt.quantization} · ${selectedStt.params}` : "No STT selected · Tap to choose"}
+            value={selectedStt?.name.split(" ").slice(0, 2).join(" ") ?? "No STT configured"}
+            onPress={() => router.push("/models")}
+            testID="settings-active-stt"
+          />
+          <Row
+            icon="thermometer-outline"
+            title="Temperature"
+            value={String(settings.temperature)}
+            status="planned"
+            onPress={() => pick("temperature", "Temperature", [0.2, 0.5, 0.7, 1].map((v) => ({ label: String(v), value: v })))}
+            testID="settings-temperature"
+          />
+          <Row
+            icon="layers-outline"
+            title="Context length"
+            value={`${settings.contextLength}`}
+            status="planned"
+            onPress={() => pick("contextLength", "Context length", [1024, 2048, 4096].map((v) => ({ label: `${v} tokens`, value: v })))}
+            last
+            testID="settings-context"
+          />
         </Section>
 
-        <Section title="Device & Calling">
+        {/* ── Device & Communication ── */}
+        <Section title="Device & Communication">
           <Row
             icon="call-outline"
             title="Calling mode"
@@ -89,20 +147,6 @@ export default function SettingsScreen() {
             testID="settings-call-mode"
           />
           <Row
-            icon="apps-outline"
-            title="App integration"
-            subtitle="Dynamic app discovery & launching"
-            value="Enabled"
-            testID="settings-app-integration"
-          />
-          <Row
-            icon="hardware-chip-outline"
-            title="System controls"
-            subtitle="Flashlight, volume, battery status"
-            value="Active"
-            testID="settings-system-controls"
-          />
-          <Row
             icon="shield-outline"
             title="Device permissions & access"
             subtitle="Microphone, contacts, phone, notifications"
@@ -112,7 +156,50 @@ export default function SettingsScreen() {
           />
         </Section>
 
-        <Section title="Personal Intelligence & Automations" footer="Manage remembered personal context and automated time-based routines.">
+        {/* ── Voice & Personalization ── */}
+        <Section title="Voice & Personalization">
+          <Row
+            icon="person-circle-outline"
+            title="Your name"
+            value={settings.name || "Not set"}
+            onPress={() => { setName(settings.name); setSheet("name"); }}
+            testID="settings-name"
+          />
+          <Row
+            icon="person-outline"
+            title="Assistant voice"
+            value={settings.voice}
+            onPress={() => pick("voice", "Assistant voice", ["Aria · neutral", "Leo · warm", "Nova · bright"].map((l) => ({ label: l, value: l, note: "Uses your device's text-to-speech voice" })))}
+            testID="settings-voice"
+          />
+          <Row
+            icon="speedometer-outline"
+            title="Speech speed"
+            value={`${settings.speechRate}×`}
+            onPress={() => pick("speechRate", "Speech speed", [0.75, 1, 1.25, 1.5].map((v) => ({ label: `${v}×`, value: v })))}
+            testID="settings-speech-rate"
+          />
+          <Row
+            icon="volume-high-outline"
+            title="Auto-play responses"
+            subtitle="Speak replies aloud using on-device TTS"
+            switchValue={settings.autoPlayback}
+            onSwitch={(v) => update({ autoPlayback: v })}
+            testID="settings-auto-playback"
+          />
+          <Row
+            icon="language-outline"
+            title="Recognition language"
+            value={settings.language}
+            status="planned"
+            onPress={() => pick("language", "Recognition language", ["English (US)", "English (India)", "Hindi", "Spanish", "German"].map((l) => ({ label: l, value: l })))}
+            last
+            testID="settings-language"
+          />
+        </Section>
+
+        {/* ── Automations ── */}
+        <Section title="Automations" footer="Manage remembered personal context and automated time-based routines.">
           <Row
             icon="bookmark-outline"
             title="Personal memory"
@@ -130,26 +217,60 @@ export default function SettingsScreen() {
           />
         </Section>
 
-        <Section title="AI model">
-          <Row icon="hardware-chip-outline" title="Selected model" subtitle={selected ? `${selected.quantization} · ${selected.params}` : "No model selected · Tap to choose"} value={selected?.name.split(" ").slice(0, 3).join(" ")} onPress={() => router.push("/models")} testID="settings-model" />
-          <Row icon="thermometer-outline" title="Temperature" value={String(settings.temperature)} status="planned" onPress={() => pick("temperature", "Temperature", [0.2, 0.5, 0.7, 1].map((v) => ({ label: String(v), value: v })))} testID="settings-temperature" />
-          <Row icon="layers-outline" title="Context length" value={`${settings.contextLength}`} status="planned" onPress={() => pick("contextLength", "Context length", [1024, 2048, 4096].map((v) => ({ label: `${v} tokens`, value: v })))} last testID="settings-context" />
+        {/* ── Privacy ── */}
+        <Section title="Privacy" footer="All processing happens on-device. No data leaves your phone.">
+          <Row
+            icon="shield-checkmark-outline"
+            title="Local processing"
+            onPress={() => setSheet("privacy")}
+            testID="settings-local-processing"
+          />
+          <Row
+            icon="recording-outline"
+            title="Audio retention"
+            value={settings.audioRetention === "never" ? "Never stored" : "This session"}
+            onPress={() => pick("audioRetention", "Audio retention", [{ label: "Never stored", value: "never" }, { label: "Keep for this session", value: "session" }])}
+            testID="settings-audio-retention"
+          />
+          <Row
+            icon="time-outline"
+            title="Keep conversations"
+            value={{ forever: "Forever", "30d": "30 days", "7d": "7 days" }[settings.conversationRetention]}
+            onPress={() => pick("conversationRetention", "Keep conversations", [{ label: "Forever", value: "forever" }, { label: "30 days", value: "30d", note: "Older chats removed on launch" }, { label: "7 days", value: "7d", note: "Older chats removed on launch" }])}
+            testID="settings-conversation-retention"
+          />
+          <Row
+            icon="trash-outline"
+            title={cleared ? "History cleared" : "Clear conversation history"}
+            danger
+            onPress={() => setSheet("clear")}
+            last
+            testID="settings-clear-history"
+          />
         </Section>
 
-        <Section title="Privacy">
-          <Row icon="shield-checkmark-outline" title="Local processing" subtitle="Nothing leaves this device" onPress={() => setSheet("privacy")} testID="settings-local-processing" />
-          <Row icon="recording-outline" title="Audio retention" value={settings.audioRetention === "never" ? "Never stored" : "This session"} onPress={() => pick("audioRetention", "Audio retention", [{ label: "Never stored", value: "never" }, { label: "Keep for this session", value: "session" }])} testID="settings-audio-retention" />
-          <Row icon="time-outline" title="Keep conversations" value={{ forever: "Forever", "30d": "30 days", "7d": "7 days" }[settings.conversationRetention]} onPress={() => pick("conversationRetention", "Keep conversations", [{ label: "Forever", value: "forever" }, { label: "30 days", value: "30d", note: "Older chats removed on launch" }, { label: "7 days", value: "7d", note: "Older chats removed on launch" }])} testID="settings-conversation-retention" />
-          <Row icon="trash-outline" title={cleared ? "History cleared" : "Clear conversation history"} danger onPress={() => setSheet("clear")} last testID="settings-clear-history" />
-        </Section>
-
-        <Section title="Application">
-          <Row icon="person-circle-outline" title="Your name" value={settings.name || "Not set"} onPress={() => { setName(settings.name); setSheet("name"); }} testID="settings-name" />
-          <Row icon="contrast-outline" title="Appearance" value={{ system: "System", dark: "Dark", light: "Light" }[settings.theme]} onPress={() => pick("theme", "Appearance", [{ label: "Dark", value: "dark" }, { label: "Light", value: "light" }, { label: "System", value: "system" }])} testID="settings-theme" />
-          <Row icon="key-outline" title="Permissions" subtitle={`Microphone: ${micLabel}`} onPress={() => setMic(true)} testID="settings-permissions" />
-          <Row icon="cloud-offline-outline" title="Offline capabilities" onPress={() => router.push("/diagnostics")} testID="settings-offline" />
-          <Row icon="pulse-outline" title="Diagnostics" onPress={() => router.push("/diagnostics")} testID="settings-diagnostics" />
-          <Row icon="information-circle-outline" title="Version" value={APP_VERSION} last testID="settings-version" />
+        {/* ── App ── */}
+        <Section title="App">
+          <Row
+            icon="contrast-outline"
+            title="Appearance"
+            value={{ system: "System", dark: "Dark", light: "Light" }[settings.theme]}
+            onPress={() => pick("theme", "Appearance", [{ label: "Dark", value: "dark" }, { label: "Light", value: "light" }, { label: "System", value: "system" }])}
+            testID="settings-theme"
+          />
+          <Row
+            icon="pulse-outline"
+            title="Diagnostics & offline"
+            onPress={() => router.push("/diagnostics")}
+            testID="settings-diagnostics"
+          />
+          <Row
+            icon="information-circle-outline"
+            title="Version"
+            value={APP_VERSION}
+            last
+            testID="settings-version"
+          />
         </Section>
       </ScrollView>
 

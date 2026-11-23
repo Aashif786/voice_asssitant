@@ -12,6 +12,8 @@ export interface SpeechRecognitionEngine {
   reason(): string | null;
   /** Point the engine at a downloaded whisper ggml model file. */
   setModel(path: string | null): void;
+  /** Sets the active STT model ID (e.g. "stt-system", "stt-companion", "stt-whisper-base"). */
+  setActiveModelId?(id: string | null): void;
   /** Begin live transcription; emits partial + final transcripts. */
   start(language: string, onTranscript: (e: TranscriptEvent) => void): Promise<{ ok: boolean; reason?: string }>;
   /** Stop listening; resolves after the final transcript has been emitted. */

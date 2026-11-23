@@ -134,7 +134,8 @@ function loadWhisper(): WhisperModule | null {
   try {
     if (!hasNativeModule("RNWhisper")) return null;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require("whisper.rn") as WhisperModule;
+    const mod = require("whisper.rn");
+    return (mod?.default ?? mod) as WhisperModule;
   } catch {
     return null;
   }
@@ -157,14 +158,14 @@ export const LiveAudioStream: LiveAudioStreamModule | null = loadLiveAudio();
 
 /** Human-readable reason a native module is missing (null when it's present). */
 export function missingNativeReason(what: "llama" | "whisper"): string | null {
-  const present = what === "llama" ? LlamaRN !== null : WhisperRN !== null && LiveAudioStream !== null;
+  const present = what === "llama" ? LlamaRN !== null : WhisperRN !== null;
   if (present) return null;
   if (isExpoGo) {
     return "You're running in Expo Go, which can't load on-device AI. Install the development build (eas build --profile development) and open the app from it.";
   }
   return what === "llama"
     ? "The llama.rn native module isn't in this build. Rebuild the app (eas build --profile development, or npx expo run:android)."
-    : "The speech native modules (whisper.rn / audio stream) aren't in this build. Rebuild the app (eas build --profile development, or npx expo run:android).";
+    : "The whisper.rn native module isn't in this build. Rebuild the app (eas build --profile development, or npx expo run:android).";
 }
 
 export const nativeInference = {
@@ -172,6 +173,6 @@ export const nativeInference = {
     return LlamaRN !== null;
   },
   get whisperAvailable(): boolean {
-    return WhisperRN !== null && LiveAudioStream !== null;
+    return WhisperRN !== null;
   },
 };

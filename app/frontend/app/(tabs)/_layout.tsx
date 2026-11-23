@@ -1,52 +1,41 @@
-import { Tabs } from "expo-router";
+import { Stack } from "expo-router";
+import { useState } from "react";
+import { Pressable, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Sidebar } from "@/src/components/common/Sidebar";
 import { Icon } from "@/src/components/common/Icon";
 import { useTheme } from "@/src/theme";
 
 export default function TabLayout() {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: {
+    <View style={{ flex: 1 }}>
+      <Stack screenOptions={{ headerShown: false }} />
+      {/* Hamburger button floating top-left */}
+      <Pressable
+        onPress={() => setSidebarOpen(true)}
+        style={{
+          position: "absolute",
+          top: insets.top + 10,
+          left: 16,
+          width: 40,
+          height: 40,
+          borderRadius: 20,
           backgroundColor: colors.surfaceSecondary,
-          borderTopColor: colors.brandSecondary,
-          height: 62,
-          paddingBottom: 8,
-          paddingTop: 6,
-        },
-        tabBarActiveTintColor: colors.brandPrimary,
-        tabBarInactiveTintColor: colors.muted,
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Assistant",
-          tabBarIcon: ({ color, size }) => (
-            <Icon name="sparkles-outline" size={size || 22} color={color} />
-          ),
+          borderWidth: 1,
+          borderColor: colors.borderStrong,
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 50,
         }}
-      />
-      <Tabs.Screen
-        name="history"
-        options={{
-          title: "History",
-          tabBarIcon: ({ color, size }) => (
-            <Icon name="time-outline" size={size || 22} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: "Settings",
-          tabBarIcon: ({ color, size }) => (
-            <Icon name="settings-outline" size={size || 22} color={color} />
-          ),
-        }}
-      />
-    </Tabs>
+        testID="hamburger-menu"
+      >
+        <Icon name="menu-outline" size={22} color={colors.onSurface} />
+      </Pressable>
+      <Sidebar visible={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+    </View>
   );
 }

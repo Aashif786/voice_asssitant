@@ -105,6 +105,7 @@ export default function AssistantHome() {
       <LinearGradient colors={["transparent", colors.glow]} style={s.bottomGlow} pointerEvents="none" />
       <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <View style={[s.top, { paddingTop: insets.top + 12 }]}>
+          <View style={{ width: 56 }} />
           <Pressable
             onPress={() => router.push("/models")}
             style={s.status}

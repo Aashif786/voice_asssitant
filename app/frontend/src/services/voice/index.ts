@@ -277,6 +277,10 @@ class SystemSpeechRecognition implements SpeechRecognitionEngine {
 
     // Android native platform
     if (Platform.OS === "android" && AndroidAssistant.isAvailable()) {
+      try {
+        await AndroidAssistant.cancelSystemSpeech();
+      } catch {}
+
       this.subPartial?.remove();
       this.subFinal?.remove();
       this.subError?.remove();
@@ -289,16 +293,24 @@ class SystemSpeechRecognition implements SpeechRecognitionEngine {
 
       this.subFinal = AndroidAssistant.onSpeechFinal((text) => {
         if (!this.listening) return;
+        this.listening = false;
         this.lastText = text;
         this.onTranscript?.({ text, isFinal: true });
+        this.cleanupListeners();
       });
 
       this.subError = AndroidAssistant.onSpeechError((err) => {
         console.warn("[SystemSpeech] error:", err);
+        if (!this.listening) return;
+        this.listening = false;
+        // If we captured partial results before the error, yield them
+        const resultText = this.lastText.trim();
+        this.onTranscript?.({ text: resultText, isFinal: true });
+        this.cleanupListeners();
       });
 
       const res = await AndroidAssistant.startSystemSpeech(language.startsWith("en") ? "en-US" : language);
-      if (res.ok) {
+      if (res && res.ok) {
         return { ok: true };
       }
     }
@@ -422,11 +434,18 @@ class BackendSpeechRecognition implements SpeechRecognitionEngine {
             if (json.text) {
               this.lastText = json.text.trim();
               this.onTranscript?.({ text: this.lastText, isFinal: true });
+            } else {
+              this.onTranscript?.({ text: "", isFinal: true });
             }
+          } else {
+            this.onTranscript?.({ text: "", isFinal: true });
           }
+        } else {
+          this.onTranscript?.({ text: "", isFinal: true });
         }
       } catch (e) {
         console.warn("[backend-stt] stop/transcribe error", e);
+        this.onTranscript?.({ text: "", isFinal: true });
       } finally {
         this.recorder = null;
         this.onTranscript = null;
@@ -468,33 +487,46 @@ class DynamicSpeechRecognition implements SpeechRecognitionEngine {
   }
 
   private resolveEngine(): { engine: SpeechRecognitionEngine | null; error?: string } {
-    // 1. Check if an explicit model ID is configured
     const id = this.activeModelId;
     if (!id) {
-      // If none selected, default to system speech if available, or ask user to configure
-      if (this.system.isAvailable()) {
-        return { engine: this.system };
-      }
+      if (this.system.isAvailable()) return { engine: this.system };
+      if (this.backend.isAvailable()) return { engine: this.backend };
       return { engine: null, error: "No Speech-to-Text model configured. Open Models tab to choose one." };
     }
 
     if (id === "stt-system") {
-      return { engine: this.system };
-    }
-    if (id === "stt-whisper-base" || id === "stt-whisper-tiny") {
-      if (!this.whisper.isAvailable()) {
-        return { engine: null, error: "The selected Whisper model is not downloaded. Please download it in the Models tab." };
-      }
-      return { engine: this.whisper };
-    }
-    if (id === "stt-companion") {
-      if (!this.backend.isAvailable()) {
-        return { engine: null, error: "Companion backend is not configured for remote STT." };
-      }
-      return { engine: this.backend };
+      if (this.system.isAvailable()) return { engine: this.system };
+      if (this.backend.isAvailable()) return { engine: this.backend };
+      return { engine: null, error: "System speech recognition is not available." };
     }
 
-    return { engine: this.system };
+    if (id.startsWith("stt-whisper") || id.startsWith("stt-distil") || id.startsWith("stt-moonshine")) {
+      if (this.whisper.isAvailable()) {
+        return { engine: this.whisper };
+      }
+      // Resilient fallback: If on-device Whisper native binary is absent or un-downloaded, use companion backend
+      if (this.backend.isAvailable()) {
+        return { engine: this.backend };
+      }
+      if (this.system.isAvailable()) {
+        return { engine: this.system };
+      }
+      return { engine: null, error: "The selected Whisper model is not downloaded. Please download it in the Models tab." };
+    }
+
+    if (id === "stt-companion") {
+      if (this.backend.isAvailable()) {
+        return { engine: this.backend };
+      }
+      if (this.system.isAvailable()) {
+        return { engine: this.system };
+      }
+      return { engine: null, error: "Companion backend is not configured for remote STT." };
+    }
+
+    if (this.backend.isAvailable()) return { engine: this.backend };
+    if (this.system.isAvailable()) return { engine: this.system };
+    return { engine: null, error: "No available speech recognition engine." };
   }
 
   get name(): string {

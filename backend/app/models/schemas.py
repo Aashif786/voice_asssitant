@@ -46,6 +46,8 @@ class ModelCompatibility(BaseModel):
 
 class ModelInfo(BaseModel):
     id: str
+    type: str = "llm"  # "llm" | "stt"
+    provider: str = "Hugging Face"
     family: str
     name: str
     params: str
@@ -53,10 +55,27 @@ class ModelInfo(BaseModel):
     format: str
     quantization: str
     languages: List[str]
+    execution: str = "local"  # "local" | "cloud" | "system"
+    requiresDownload: bool = True
     compatibility: ModelCompatibility
     hue: str
     isDownloaded: bool = False
     filePath: Optional[str] = None
+    downloadUrl: Optional[str] = None
+
+class CustomModelRequest(BaseModel):
+    id: str
+    name: str
+    type: str = "llm"  # "llm" | "stt"
+    provider: str = "Hugging Face"
+    family: str = "Custom"
+    params: str = "Unknown"
+    sizeBytes: int = 0
+    format: str = "GGUF"
+    quantization: str = "Q4_K_M"
+    languages: List[str] = Field(default_factory=lambda: ["EN"])
+    downloadUrl: str
+    execution: str = "local"
 
 class ModelStateResponse(BaseModel):
     installed: List[str] = Field(default_factory=list)

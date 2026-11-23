@@ -175,37 +175,62 @@ class AIEngine:
                 return (tool_out["message"], tool_call)
 
         # Step 2: Try Local Offline LLM Execution (real GGUF model via llama.cpp)
-        selected_id = model_manager.selected_model_id
-        if selected_id:
-            model_file = MODELS_DIR / f"{selected_id}.gguf"
-            if model_file.exists():
-                # Ensure server is running for this model
-                server_ok = local_llm.ensure_server(selected_id, model_file)
-                if server_ok:
-                    messages = [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a concise, helpful offline on-device AI voice assistant. "
-                                "Provide clear, direct answers without unnecessary fluff."
-                            )
-                        }
-                    ]
-                    for m in history[-6:]:
-                        r = "assistant" if m.role == "assistant" else "user"
-                        messages.append({"role": r, "content": m.content})
-                    messages.append({"role": "user", "content": t})
+        target_id = model_name or model_manager.selected_model_id
+        model_file = None
 
-                    try:
-                        reply = await local_llm.chat_completion(
-                            messages=messages,
-                            temperature=temperature,
-                            max_tokens=256
-                        )
-                        if reply:
-                            return (reply, None)
-                    except Exception:
-                        pass
+        if target_id and target_id != "llm-companion":
+            candidate = MODELS_DIR / f"{target_id}.gguf"
+            if candidate.exists():
+                model_file = candidate
+
+        # If selected model is "llm-companion" or file not found, resolve to any available GGUF model
+        if not model_file:
+            from backend.app.services.database import get_installed_model_ids
+            installed = get_installed_model_ids()
+            candidates_to_try = []
+            if target_id:
+                candidates_to_try.append(target_id)
+            candidates_to_try.extend(["qwen2.5-0.5b", "smollm2-135m"])
+            candidates_to_try.extend(installed)
+            for cand_id in candidates_to_try:
+                cand_path = MODELS_DIR / f"{cand_id}.gguf"
+                if cand_path.exists():
+                    model_file = cand_path
+                    target_id = cand_id
+                    break
+
+        # Check if local_llm server is already alive
+        server_ok = False
+        if model_file and target_id:
+            server_ok = local_llm.ensure_server(target_id, model_file)
+        elif local_llm.is_running():
+            server_ok = True
+
+        if server_ok:
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a concise, helpful offline on-device AI voice assistant. "
+                        "Provide clear, direct answers without unnecessary fluff."
+                    )
+                }
+            ]
+            for m in history[-6:]:
+                r = "assistant" if m.role == "assistant" else "user"
+                messages.append({"role": r, "content": m.content})
+            messages.append({"role": "user", "content": t})
+
+            try:
+                reply = await local_llm.chat_completion(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=256
+                )
+                if reply:
+                    return (reply, None)
+            except Exception:
+                pass
 
         # Step 3: Try Cloud LLM if configured and local model not active
         if self.gemini_client:

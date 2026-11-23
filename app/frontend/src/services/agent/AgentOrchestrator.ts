@@ -181,8 +181,10 @@ class OnDeviceAgentOrchestrator implements AgentOrchestrator {
       return await Promise.race([executionPromise, timeoutPromise]);
     } catch (err: any) {
       console.warn("[AgentOrchestrator] handle error:", err);
+      // Fallback gracefully instead of failing with connection error
+      const fallback = await ruleEngine.generate({ text, history });
       return {
-        text: `An error occurred: ${err?.message || "Unknown error"}. Try again.`,
+        text: fallback.text,
         tool: null,
       };
     }
@@ -192,12 +194,29 @@ class OnDeviceAgentOrchestrator implements AgentOrchestrator {
     const state = await modelService.loadState();
     const selectedLlmId = state.selectedLlm;
 
-    // 4a. If user selected Companion Backend LLM
-    if (selectedLlmId === "llm-companion" && isBackendConfigured()) {
+    // 1. If on-device local GGUF model is downloaded & ready natively (custom dev build with llama.rn)
+    if (selectedLlmId && selectedLlmId !== "llm-companion" && onDeviceLlama.available()) {
+      const modelMeta = modelService.findModel(selectedLlmId);
+      if (modelMeta?.requiresDownload && state.installed.includes(selectedLlmId)) {
+        const modelPath = modelService.pathFor(selectedLlmId);
+        onDeviceLlama.setModel(modelPath, modelMeta.name);
+        if (await onDeviceLlama.ensureReady()) {
+          try {
+            const res = await onDeviceLlama.generate({ text, history });
+            if (res.text) return res.text;
+          } catch {
+            /* fall through to backend or rule engine */
+          }
+        }
+      }
+    }
+
+    // 2. Companion Backend Server (handles GGUF llama-server, local models, or cloud models seamlessly)
+    if (isBackendConfigured()) {
       try {
         const backend = await apiRequest<{ text: string; tool: ToolCall | null }>("api/chat/generate", {
           method: "POST",
-          body: JSON.stringify({ text, history }),
+          body: JSON.stringify({ text, history, model: selectedLlmId }),
         });
         if (backend.data && !backend.error && backend.data.text) {
           return backend.data.text;
@@ -207,38 +226,7 @@ class OnDeviceAgentOrchestrator implements AgentOrchestrator {
       }
     }
 
-    // 4b. On-device local GGUF model
-    if (selectedLlmId && selectedLlmId !== "llm-companion") {
-      const modelMeta = modelService.findModel(selectedLlmId);
-      if (modelMeta?.requiresDownload && !state.installed.includes(selectedLlmId)) {
-        return `The selected model (${modelMeta.name}) is not downloaded yet. Open the Models tab to download it for offline reasoning.`;
-      }
-
-      if (await onDeviceLlama.ensureReady()) {
-        const res = await onDeviceLlama.generate({ text, history });
-        if (res.text) return res.text;
-      }
-
-      const why = onDeviceLlama.unavailableReason();
-      if (why) return why;
-    }
-
-    // 4c. Optional companion backend fallback if configured
-    if (isBackendConfigured()) {
-      try {
-        const backend = await apiRequest<{ text: string; tool: ToolCall | null }>("api/chat/generate", {
-          method: "POST",
-          body: JSON.stringify({ text, history }),
-        });
-        if (backend.data && !backend.error && backend.data.text) {
-          return backend.data.text;
-        }
-      } catch {
-        /* fall through */
-      }
-    }
-
-    // 4d. Deterministic offline fallback engine
+    // 3. Deterministic offline rule engine fallback
     const fallback = await ruleEngine.generate({ text, history });
     return fallback.text;
   }
