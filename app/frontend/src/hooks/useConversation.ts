@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { agent } from "@/src/services/agent/AgentOrchestrator";
+import type { AgentExecutionOptions } from "@/src/services/agent/AgentOrchestrator.interface";
 import { conversationRepository as repo } from "@/src/services/storage/SQLiteService";
 import { speechSynthesis } from "@/src/services/voice";
 import { useSettings } from "@/src/store/settings";
@@ -22,6 +23,13 @@ export function useConversation(initialId: string | null) {
     msgsRef.current = messages;
   }, [messages]);
 
+  // Always stop speech synthesis when unmounting, including for new conversations
+  useEffect(() => {
+    return () => {
+      speechSynthesis.stop();
+    };
+  }, []);
+
   useEffect(() => {
     if (!initialId) return;
     (async () => {
@@ -30,7 +38,6 @@ export function useConversation(initialId: string | null) {
       setMessages(m);
       setLoading(false);
     })();
-    return () => speechSynthesis.stop();
   }, [initialId]);
 
   const push = async (m: Message) => {
@@ -69,7 +76,7 @@ export function useConversation(initialId: string | null) {
   };
 
   const send = useCallback(
-    async (raw: string) => {
+    async (raw: string, options?: AgentExecutionOptions) => {
       const text = raw.trim();
       if (!text || busy.current) return;
       busy.current = true;
@@ -87,7 +94,7 @@ export function useConversation(initialId: string | null) {
         await push({ id: newId(), conversationId: cid, role: "user", content: text, createdAt: Date.now(), tool: null });
 
         setState("processing");
-        const res = await agent.handle(text, history, setState);
+        const res = await agent.handle(text, history, setState, options);
         await reply(cid, res.text, res.tool);
       } catch (e) {
         console.warn("[useConversation] send failed:", e);
@@ -101,13 +108,13 @@ export function useConversation(initialId: string | null) {
   );
 
   const resolveTool = useCallback(
-    async (messageId: string, approved: boolean) => {
+    async (messageId: string, approved: boolean, options?: AgentExecutionOptions) => {
       const msg = msgsRef.current.find((m) => m.id === messageId);
       if (!msg?.tool || !convId || busy.current) return;
       busy.current = true;
 
       try {
-        const res = await agent.resolveConfirmation(msg.tool, approved, setState);
+        const res = await agent.resolveConfirmation(msg.tool, approved, setState, options);
         const updated = res.tool!;
         setMessages((cur) => cur.map((m) => (m.id === messageId ? { ...m, tool: updated } : m)));
         await repo.updateMessageTool(messageId, updated);

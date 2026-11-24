@@ -40,6 +40,8 @@ export function ModelsProvider({ children }: { children: ReactNode }) {
       const m = id ? models.find((x) => x.id === id) ?? null : null;
       if (m && m.type === "llm" && m.requiresDownload) {
         onDeviceLlama.setModel(modelService.pathFor(m.id), m.name);
+        // Pre-warm model in background so first prompt is instantaneous
+        void onDeviceLlama.ensureReady().catch(() => {});
       } else {
         onDeviceLlama.setModel(null, m?.name);
       }

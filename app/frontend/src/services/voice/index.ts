@@ -2,6 +2,13 @@ import * as Speech from "expo-speech";
 import { Buffer } from "buffer";
 import { Platform } from "react-native";
 
+let FS: any;
+try {
+  FS = require("expo-file-system/legacy");
+} catch {
+  FS = null;
+}
+
 import { getBackendUrl, isBackendConfigured } from "@/src/services/api";
 import {
   LiveAudioStream,
@@ -69,10 +76,27 @@ class WhisperSpeechRecognition implements SpeechRecognitionEngine {
     if (this.ctx) return true;
     if (!WhisperRN || !this.modelPath) return false;
     if (this.loading) return this.loading;
-    const filePath = this.modelPath;
+
+    const rawPath = this.modelPath.replace(/^file:\/\//, "");
+    if (FS?.getInfoAsync) {
+      try {
+        const info = await FS.getInfoAsync(this.modelPath);
+        if (!info.exists) {
+          console.warn(`[whisper] model file does not exist on disk: ${this.modelPath}`);
+          return false;
+        }
+      } catch (err) {
+        console.warn("[whisper] error checking file existence:", err);
+      }
+    }
+
     this.loading = (async () => {
       try {
-        this.ctx = await WhisperRN.initWhisper({ filePath });
+        const initPromise = WhisperRN.initWhisper({ filePath: rawPath, useGpu: false });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Whisper initialization timed out after 45s")), 45000)
+        );
+        this.ctx = await Promise.race([initPromise, timeoutPromise]);
         return true;
       } catch (e) {
         console.warn("[whisper] initWhisper failed", e);
@@ -477,6 +501,7 @@ class DynamicSpeechRecognition implements SpeechRecognitionEngine {
   private system = new SystemSpeechRecognition();
   private backend = new BackendSpeechRecognition();
   private activeModelId: string | null = null;
+  private runningEngine: SpeechRecognitionEngine | null = null;
 
   setModel(path: string | null): void {
     this.whisper.setModel(path);
@@ -561,17 +586,42 @@ class DynamicSpeechRecognition implements SpeechRecognitionEngine {
     if (!engine) {
       return { ok: false, reason: error ?? "Speech recognition is unavailable." };
     }
-    return engine.start(language, onTranscript);
+
+    const res = await engine.start(language, onTranscript);
+    if (!res.ok) {
+      console.warn(`[speech] ${engine.name} failed to start (${res.reason}), attempting fallback...`);
+      const fallback =
+        engine !== this.system && this.system.isAvailable()
+          ? this.system
+          : engine !== this.backend && this.backend.isAvailable()
+          ? this.backend
+          : null;
+
+      if (fallback) {
+        console.info(`[speech] Falling back to ${fallback.name}`);
+        const fallbackRes = await fallback.start(language, onTranscript);
+        if (fallbackRes.ok) {
+          this.runningEngine = fallback;
+          return fallbackRes;
+        }
+      }
+      return res;
+    }
+
+    this.runningEngine = engine;
+    return res;
   }
 
   async stop(): Promise<void> {
-    const { engine } = this.resolveEngine();
-    if (engine) await engine.stop();
+    const active = this.runningEngine || this.resolveEngine().engine;
+    this.runningEngine = null;
+    if (active) await active.stop();
   }
 
   async cancel(): Promise<void> {
-    const { engine } = this.resolveEngine();
-    if (engine) await engine.cancel();
+    const active = this.runningEngine || this.resolveEngine().engine;
+    this.runningEngine = null;
+    if (active) await active.cancel();
   }
 }
 

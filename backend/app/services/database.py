@@ -1,14 +1,24 @@
+import contextlib
+import json
 import sqlite3
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 from backend.app.config import DB_PATH
 
-def get_connection() -> sqlite3.Connection:
+@contextlib.contextmanager
+def get_connection() -> Generator[sqlite3.Connection, None, None]:
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=15.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL;")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def init_db() -> None:
     with get_connection() as conn:
@@ -60,6 +70,24 @@ def init_db() -> None:
                 size_bytes INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'installed',
                 downloaded_at INTEGER NOT NULL
+            )
+        """)
+
+        # Personal memories table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                fact TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+        """)
+
+        # Custom models registry table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS custom_models (
+                id TEXT PRIMARY KEY,
+                data_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL
             )
         """)
         
@@ -171,6 +199,56 @@ def get_installed_model_ids() -> List[str]:
     with get_connection() as conn:
         cursor = conn.execute("SELECT id FROM model_registry")
         return [row["id"] for row in cursor.fetchall()]
+
+# Custom models helpers
+def save_custom_model_record(model_id: str, data: Dict[str, Any]) -> None:
+    now = int(time.time() * 1000)
+    norm_id = model_id.lower().strip()
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO custom_models (id, data_json, created_at) VALUES (?, ?, ?)",
+            (norm_id, json.dumps(data), now)
+        )
+        conn.commit()
+
+def load_custom_models_records() -> Dict[str, Dict[str, Any]]:
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT id, data_json FROM custom_models")
+        result = {}
+        for row in cursor.fetchall():
+            try:
+                result[row["id"].lower()] = json.loads(row["data_json"])
+            except Exception:
+                pass
+        return result
+
+def delete_custom_model_record(model_id: str) -> None:
+    norm_id = model_id.lower().strip()
+    with get_connection() as conn:
+        conn.execute("DELETE FROM custom_models WHERE id = ?", (norm_id,))
+        conn.commit()
+
+# Personal memories helpers
+def save_memory(fact: str) -> Dict[str, Any]:
+    mem_id = str(uuid.uuid4())
+    now = int(time.time() * 1000)
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO memories (id, fact, created_at) VALUES (?, ?, ?)",
+            (mem_id, fact.strip(), now)
+        )
+        conn.commit()
+    return {"id": mem_id, "fact": fact.strip(), "created_at": now}
+
+def list_memories() -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT * FROM memories ORDER BY created_at DESC")
+        return [dict(row) for row in cursor.fetchall()]
+
+def delete_memory(mem_id: str) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
+        conn.commit()
 
 # Ensure tables are initialized on import
 init_db()

@@ -1,37 +1,31 @@
-const assert = require("assert");
+import assert from "node:assert";
+import { FRONTIER_MODEL_CATALOGUE, modelService } from "../src/services/models/ModelService.ts";
 
-// Mock model catalogue structure as implemented in ModelService.ts
-const MODEL_CATALOGUE = [
-  // LLM
-  { id: "smollm2-135m", type: "llm", name: "SmolLM2 135M Instruct", requiresDownload: true, execution: "local" },
-  { id: "qwen2.5-0.5b", type: "llm", name: "Qwen 2.5 0.5B Instruct", requiresDownload: true, execution: "local" },
-  { id: "llm-companion", type: "llm", name: "Companion Backend LLM", requiresDownload: false, execution: "cloud" },
-  // STT
-  { id: "stt-system", type: "stt", name: "System Speech Recognizer", requiresDownload: false, execution: "system" },
-  { id: "stt-whisper-base", type: "stt", name: "Whisper Base", requiresDownload: true, execution: "local" },
-  { id: "stt-whisper-tiny", type: "stt", name: "Whisper Tiny", requiresDownload: true, execution: "local" },
-  { id: "stt-companion", type: "stt", name: "Companion Whisper STT", requiresDownload: false, execution: "cloud" },
-];
-
-console.log("Running Model Registry & Independent Selection Tests...");
+console.log("Running Model Registry & Independent Selection Tests (Real ModelService)...");
 
 // Test 1: Catalogue partitioning
 {
-  const llmModels = MODEL_CATALOGUE.filter(m => m.type === "llm");
-  const sttModels = MODEL_CATALOGUE.filter(m => m.type === "stt");
+  const allModels = modelService.catalogue();
+  const llmModels = modelService.catalogue("llm");
+  const sttModels = modelService.catalogue("stt");
 
-  assert.strictEqual(llmModels.length, 3);
-  assert.strictEqual(sttModels.length, 4);
-  console.log("✓ Test 1: Model catalogue partitioned into LLM and STT models correctly.");
+  assert.ok(allModels.length > 0, "Catalogue should not be empty");
+  assert.ok(llmModels.length > 0, "LLM catalogue should not be empty");
+  assert.ok(sttModels.length > 0, "STT catalogue should not be empty");
+  assert.strictEqual(llmModels.length + sttModels.length, allModels.length, "All models must be partitioned into LLM or STT");
+  assert.strictEqual(allModels.length, FRONTIER_MODEL_CATALOGUE.length, "Catalogue matches FRONTIER_MODEL_CATALOGUE length");
+  console.log(`✓ Test 1: Model catalogue partitioned correctly (${llmModels.length} LLMs, ${sttModels.length} STTs, ${allModels.length} total).`);
 }
 
 // Test 2: System and Cloud STT do not require download
 {
-  const sysStt = MODEL_CATALOGUE.find(m => m.id === "stt-system");
+  const sysStt = modelService.findModel("stt-system");
+  assert.ok(sysStt, "stt-system must exist in catalogue");
   assert.strictEqual(sysStt.requiresDownload, false);
   assert.strictEqual(sysStt.execution, "system");
 
-  const compStt = MODEL_CATALOGUE.find(m => m.id === "stt-companion");
+  const compStt = modelService.findModel("stt-companion");
+  assert.ok(compStt, "stt-companion must exist in catalogue");
   assert.strictEqual(compStt.requiresDownload, false);
   assert.strictEqual(compStt.execution, "cloud");
   console.log("✓ Test 2: System and Cloud STT models do not require download.");
@@ -39,33 +33,62 @@ console.log("Running Model Registry & Independent Selection Tests...");
 
 // Test 3: Local Whisper models require download
 {
-  const whisperBase = MODEL_CATALOGUE.find(m => m.id === "stt-whisper-base");
+  const whisperBase = modelService.findModel("stt-whisper-base");
+  assert.ok(whisperBase, "stt-whisper-base must exist in catalogue");
   assert.strictEqual(whisperBase.requiresDownload, true);
   assert.strictEqual(whisperBase.execution, "local");
+  assert.ok(whisperBase.downloadUrl, "Local model must provide downloadUrl");
+
+  const whisperTiny = modelService.findModel("stt-whisper-tiny");
+  assert.ok(whisperTiny, "stt-whisper-tiny must exist in catalogue");
+  assert.strictEqual(whisperTiny.requiresDownload, true);
+  assert.strictEqual(whisperTiny.execution, "local");
   console.log("✓ Test 3: Local Whisper models require explicit download.");
 }
 
-// Test 4: Independent state persistence simulation
+// Test 4: Frontier reasoning models verification
 {
-  let state = {
-    installed: ["stt-system", "stt-companion", "llm-companion"],
-    selectedLlm: "smollm2-135m",
-    selectedStt: null // No STT auto-downloaded on initial setup
-  };
+  const deepseek = modelService.findModel("deepseek-r1-distill-qwen-1.5b");
+  assert.ok(deepseek, "DeepSeek R1 Distill must exist in catalogue");
+  assert.strictEqual(deepseek.requiresDownload, true);
+  assert.strictEqual(deepseek.execution, "local");
+  assert.strictEqual(deepseek.type, "llm");
 
-  assert.strictEqual(state.selectedStt, null, "STT must not be auto-installed on initial setup");
-
-  // User selects system STT
-  state.selectedStt = "stt-system";
-  assert.strictEqual(state.selectedStt, "stt-system");
-  assert.strictEqual(state.selectedLlm, "smollm2-135m");
-
-  // User changes LLM independently
-  state.selectedLlm = "qwen2.5-0.5b";
-  assert.strictEqual(state.selectedLlm, "qwen2.5-0.5b");
-  assert.strictEqual(state.selectedStt, "stt-system", "Changing LLM must not alter selected STT");
-
-  console.log("✓ Test 4: Independent LLM and STT selection verified.");
+  const smollm = modelService.findModel("smollm2-135m");
+  assert.ok(smollm, "SmolLM2 must exist in catalogue");
+  assert.strictEqual(smollm.requiresDownload, true);
+  console.log("✓ Test 4: Frontier reasoning and local LLMs verified.");
 }
 
-console.log("\nALL MODEL REGISTRY TESTS PASSED SUCCESSFULLY!");
+// Test 5: Independent state persistence simulation
+async function runStateTest() {
+  const state = await modelService.loadState();
+  assert.ok(Array.isArray(state.installed), "state.installed must be an array");
+  assert.ok(state.selectedLlm !== undefined, "selectedLlm must be defined");
+  assert.ok(state.selectedStt !== undefined, "selectedStt must be defined");
+
+  // Verify independent selection logic
+  let customState = {
+    installed: [...state.installed],
+    selectedLlm: "smollm2-135m",
+    selectedStt: "stt-system",
+  };
+
+  // Changing LLM does not affect STT
+  customState.selectedLlm = "deepseek-r1-distill-qwen-1.5b";
+  assert.strictEqual(customState.selectedLlm, "deepseek-r1-distill-qwen-1.5b");
+  assert.strictEqual(customState.selectedStt, "stt-system", "Changing LLM must not alter selected STT");
+
+  // Changing STT does not affect LLM
+  customState.selectedStt = "stt-companion";
+  assert.strictEqual(customState.selectedLlm, "deepseek-r1-distill-qwen-1.5b", "Changing STT must not alter selected LLM");
+  assert.strictEqual(customState.selectedStt, "stt-companion");
+
+  console.log("✓ Test 5: Independent LLM and STT selection verified.");
+  console.log("\nALL REAL MODEL REGISTRY TESTS PASSED SUCCESSFULLY!");
+}
+
+runStateTest().catch((err) => {
+  console.error("Test 5 failed:", err);
+  process.exit(1);
+});

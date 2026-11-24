@@ -1,7 +1,7 @@
-import * as SQLite from "expo-sqlite";
 import { Platform } from "react-native";
 import { newId } from "@/src/utils/format";
 import { storage } from "@/src/utils/storage";
+import { getDatabase } from "./database";
 
 export interface UserMemory {
   id: string;
@@ -17,30 +17,8 @@ export interface UserMemory {
 
 const WEB_KEY = "ova_user_memories_v1";
 
-let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 function getDb() {
-  if (Platform.OS === "web") return null;
-  if (!dbPromise) {
-    dbPromise = (async () => {
-      const d = await SQLite.openDatabaseAsync("assistant.db");
-      await d.execAsync(`
-        CREATE TABLE IF NOT EXISTS user_memories (
-          id TEXT PRIMARY KEY NOT NULL,
-          category TEXT NOT NULL,
-          subject TEXT NOT NULL,
-          predicate TEXT NOT NULL,
-          object TEXT NOT NULL,
-          confidence REAL NOT NULL DEFAULT 1.0,
-          source TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_memories_cat ON user_memories(category, subject);
-      `);
-      return d;
-    })();
-  }
-  return dbPromise;
+  return getDatabase();
 }
 
 type MemoryRow = {

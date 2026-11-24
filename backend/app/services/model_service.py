@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -9,12 +10,23 @@ import httpx
 from backend.app.config import DATA_DIR, MODELS_DIR
 from backend.app.models.schemas import ModelCompatibility, ModelInfo, ModelStateResponse
 from backend.app.services.database import (
+    delete_custom_model_record,
     delete_model_record,
     get_connection,
     get_installed_model_ids,
+    load_custom_models_records,
     register_model_record,
+    save_custom_model_record,
 )
 from backend.app.services.local_llm import local_llm
+
+MODEL_ID_REGEX = re.compile(r"^[a-zA-Z0-9._-]+$")
+
+
+def validate_model_id(model_id: str) -> str:
+    if not model_id or not MODEL_ID_REGEX.match(model_id):
+        raise ValueError(f"Invalid model ID '{model_id}'. Must match pattern ^[a-zA-Z0-9._-]+$")
+    return model_id
 
 GB = 1024 ** 3
 MB = 1024 ** 2
@@ -131,15 +143,15 @@ FRONTIER_BASELINE: List[Dict[str, Any]] = [
         "family": "Gemma",
         "name": "Gemma 3 1B IT",
         "params": "1B",
-        "sizeBytes": 105487360,
+        "sizeBytes": 800000000,
         "format": "GGUF",
         "quantization": "Q4_K_M",
         "languages": ["EN"],
         "execution": "local",
         "requiresDownload": True,
-        "compatibility": {"level": "likely", "note": "Smallest footprint · fastest replies"},
+        "compatibility": {"level": "likely", "note": "High-speed Google Gemma reasoning · Fits 2-3 GB RAM"},
         "hue": "accent",
-        "downloadUrl": "https://huggingface.co/prithivMLmods/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct.Q4_K_M.gguf"
+        "downloadUrl": "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q4_K_M.gguf"
     },
     {
         "id": "qwen2.5-coder-1.5b",
@@ -435,8 +447,17 @@ class ModelManager:
         self.download_state: Dict[str, Dict[str, Any]] = {}
         self.selected_model_id: Optional[str] = None
         self.custom_models: Dict[str, Dict[str, Any]] = {}
+        self._load_custom_models()
         self._sync_disk_models()
         self._load_selected_model()
+
+    def _load_custom_models(self) -> None:
+        try:
+            stored = load_custom_models_records()
+            for mid, data in stored.items():
+                self.custom_models[mid.lower()] = data
+        except Exception:
+            pass
 
     def _sync_disk_models(self) -> None:
         """
@@ -572,7 +593,9 @@ class ModelManager:
                             "downloadUrl": download_url
                         }
                         results.append(entry)
-                        self.custom_models[clean_id] = entry
+                        norm_clean_id = clean_id.lower()
+                        self.custom_models[norm_clean_id] = entry
+                        save_custom_model_record(norm_clean_id, entry)
         except Exception:
             pass
         return results
@@ -661,7 +684,13 @@ class ModelManager:
         sel = self.selected_model_id if self.selected_model_id in installed else (installed[0] if installed else None)
         return ModelStateResponse(installed=installed, selected=sel)
 
-    def select_model(self, model_id: str) -> None:
+    async def select_model(self, model_id: str) -> None:
+        validate_model_id(model_id)
+        models_root = MODELS_DIR.resolve()
+        model_file = (models_root / f"{model_id}.gguf").resolve()
+        if not model_file.is_relative_to(models_root):
+            raise ValueError(f"Path traversal detected: model ID '{model_id}' resolves outside models directory")
+
         self.selected_model_id = model_id
         with get_connection() as conn:
             conn.execute(
@@ -671,17 +700,21 @@ class ModelManager:
             conn.commit()
 
         # Switch local inference server to this model if it's installed
-        model_file = MODELS_DIR / f"{model_id}.gguf"
         if model_file.exists():
-            local_llm.ensure_server(model_id, model_file)
+            await asyncio.to_thread(local_llm.ensure_server, model_id, model_file)
 
-    def add_custom_model(self, model_data: Dict[str, Any]) -> ModelInfo:
-        mid = model_data["id"]
-        self.custom_models[mid] = model_data
+    def add_custom_model(self, model_data: Dict[str, Any]) -> Optional[ModelInfo]:
+        mid = model_data.get("id", "").strip()
+        validate_model_id(mid)
+        norm_id = mid.lower()
+        model_data["id"] = mid
+        self.custom_models[norm_id] = model_data
+        save_custom_model_record(norm_id, model_data)
         catalogue = self.get_catalogue()
-        return next((m for m in catalogue if m.id == mid), None)
+        return next((m for m in catalogue if m.id.lower() == norm_id), None)
 
     def get_progress(self, model_id: str) -> Dict[str, Any]:
+        validate_model_id(model_id)
         if model_id in self.download_state:
             return self.download_state[model_id]
 
@@ -691,6 +724,7 @@ class ModelManager:
         return {"progress": 0.0, "status": "idle", "downloadedBytes": 0, "totalBytes": 0}
 
     async def download_model(self, model_id: str) -> bool:
+        validate_model_id(model_id)
         meta = self.find_in_baseline(model_id)
         if not meta:
             raise ValueError(f"Unknown model ID: {model_id}")
@@ -699,9 +733,13 @@ class ModelManager:
         if not url:
             raise ValueError(f"No download URL configured for model {model_id}")
 
+        models_root = MODELS_DIR.resolve()
         file_ext = ".bin" if meta.get("type") == "stt" else ".gguf"
-        file_path = MODELS_DIR / f"{model_id}{file_ext}"
-        tmp_path = MODELS_DIR / f"{model_id}{file_ext}.tmp"
+        file_path = (models_root / f"{model_id}{file_ext}").resolve()
+        tmp_path = (models_root / f"{model_id}{file_ext}.tmp").resolve()
+
+        if not file_path.is_relative_to(models_root) or not tmp_path.is_relative_to(models_root):
+            raise ValueError(f"Path traversal detected: model ID '{model_id}' resolves outside models directory")
 
         self.download_state[model_id] = {
             "progress": 0.01,
@@ -763,7 +801,7 @@ class ModelManager:
 
             if meta.get("type") == "llm":
                 if not self.selected_model_id or self.selected_model_id not in get_installed_model_ids():
-                    self.select_model(model_id)
+                    await self.select_model(model_id)
 
             return True
 
@@ -780,15 +818,23 @@ class ModelManager:
             raise e
 
     def delete_model(self, model_id: str) -> None:
+        validate_model_id(model_id)
+        norm_id = model_id.lower().strip()
+        models_root = MODELS_DIR.resolve()
+
         for ext in [".gguf", ".bin"]:
-            fp = MODELS_DIR / f"{model_id}{ext}"
-            tp = MODELS_DIR / f"{model_id}{ext}.tmp"
+            fp = (models_root / f"{model_id}{ext}").resolve()
+            tp = (models_root / f"{model_id}{ext}.tmp").resolve()
+            if not fp.is_relative_to(models_root) or not tp.is_relative_to(models_root):
+                raise ValueError(f"Path traversal detected: model ID '{model_id}' resolves outside models directory")
             if fp.exists():
                 fp.unlink(missing_ok=True)
             if tp.exists():
                 tp.unlink(missing_ok=True)
 
         delete_model_record(model_id)
+        delete_custom_model_record(norm_id)
+        self.custom_models.pop(norm_id, None)
         self.download_state.pop(model_id, None)
 
         if self.selected_model_id == model_id:

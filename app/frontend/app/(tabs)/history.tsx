@@ -35,10 +35,13 @@ export default function HistoryScreen() {
 
   return (
     <View style={s.root}>
-      <View style={[s.header, { paddingTop: insets.top + 16 }]}>
-        <View>
-          <Text style={s.title}>History</Text>
-          <Text style={s.sub}>Stored only on this device</Text>
+      <View style={[s.header, { paddingTop: insets.top + 12 }]}>
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1, paddingRight: 12 }}>
+          <View style={{ width: 48 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.title}>History</Text>
+            <Text style={s.sub}>Stored only on this device</Text>
+          </View>
         </View>
         <Pressable onPress={openNew} style={s.newBtn} testID="history-new-conversation">
           <Icon name="add" size={18} color={colors.onBrandPrimary} />

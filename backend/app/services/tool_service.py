@@ -1,14 +1,20 @@
+import asyncio
 import datetime
 import os
+import re
 import urllib.parse
 from pathlib import Path
 from typing import Any, Dict
 import httpx
 
+from backend.app.config import SEARCH_ROOT
 from backend.app.services.database import (
     create_reminder,
+    delete_memory,
     list_calendar_events,
+    list_memories,
     save_draft_message,
+    save_memory,
 )
 
 class ToolService:
@@ -49,11 +55,6 @@ class ToolService:
     async def read_calendar(range_param: str = "today") -> Dict[str, Any]:
         range_key = range_param.lower().strip() if range_param else "today"
         events = list_calendar_events(range_key)
-        if not events and range_key != "all":
-            # Fallback to check all events if specific filter has none
-            all_events = list_calendar_events("all")
-            if all_events:
-                events = all_events[:3]
 
         if not events:
             return {
@@ -72,28 +73,38 @@ class ToolService:
         }
 
     @staticmethod
+    def _walk_files_sync(search_dir: Path, query_lower: str) -> list[str]:
+        matches = []
+        ignored_dirs = {"node_modules", ".git", ".expo", ".system_generated", "__pycache__", "venv"}
+        for root, dirs, files in os.walk(str(search_dir)):
+            dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith(".")]
+            for file in files:
+                if query_lower in file.lower():
+                    full_path = (Path(root) / file).resolve()
+                    if not full_path.is_relative_to(search_dir):
+                        continue
+                    rel_path = full_path.relative_to(search_dir)
+                    size_kb = round(full_path.stat().st_size / 1024, 1)
+                    matches.append(f"• {rel_path} ({size_kb} KB)")
+                    if len(matches) >= 8:
+                        break
+            if len(matches) >= 8:
+                break
+        return matches
+
+    @staticmethod
     async def search_files(query: str) -> Dict[str, Any]:
         if not query or not query.strip():
             return {"status": "unavailable", "message": "Search query is required."}
 
         q = query.lower().strip()
-        workspace_dir = Path(__file__).resolve().parent.parent.parent.parent
-        matches = []
-        ignored_dirs = {"node_modules", ".git", ".expo", ".system_generated", "__pycache__", "venv"}
+        search_dir = SEARCH_ROOT.resolve()
 
         try:
-            for root, dirs, files in os.walk(str(workspace_dir)):
-                dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith(".")]
-                for file in files:
-                    if q in file.lower():
-                        full_path = Path(root) / file
-                        rel_path = full_path.relative_to(workspace_dir)
-                        size_kb = round(full_path.stat().st_size / 1024, 1)
-                        matches.append(f"• {rel_path} ({size_kb} KB)")
-                        if len(matches) >= 8:
-                            break
-                if len(matches) >= 8:
-                    break
+            if not search_dir.exists():
+                search_dir.mkdir(parents=True, exist_ok=True)
+
+            matches = await asyncio.to_thread(ToolService._walk_files_sync, search_dir, q)
 
             if matches:
                 return {
@@ -103,7 +114,7 @@ class ToolService:
             else:
                 return {
                     "status": "completed",
-                    "message": f"No files found matching \"{query}\" in the workspace."
+                    "message": f"No files found matching \"{query}\" in the sandboxed search directory."
                 }
         except Exception as e:
             return {
@@ -116,7 +127,10 @@ class ToolService:
         if not query or not query.strip():
             return {"status": "unavailable", "message": "Search query is required."}
 
-        clean_q = query.replace("search", "").replace("google", "").replace("for", "").strip()
+        clean_q = re.sub(r"\b(search|google|for)\b", "", query, flags=re.IGNORECASE)
+        clean_q = re.sub(r"\s+", " ", clean_q).strip()
+        if not clean_q:
+            clean_q = query.strip()
         try:
             # DuckDuckGo Instant Answer API
             async with httpx.AsyncClient(timeout=8.0) as client:
@@ -210,10 +224,26 @@ class ToolService:
                 "message": "Good morning! Here is your daily summary: 2 meetings scheduled today, battery is at 85%, and weather is clear."
             }
         elif tool_name == "manage_memory":
-            fact = params.get("fact", "")
+            fact = params.get("fact", "").strip()
+            action = params.get("action", "add")
+            if action in ("delete", "remove"):
+                mem_id = params.get("id", "")
+                if mem_id:
+                    delete_memory(mem_id)
+                    return {"status": "completed", "message": f"Deleted memory {mem_id}."}
+            if fact:
+                save_memory(fact)
+                return {
+                    "status": "completed",
+                    "message": f"Remembered personal fact: \"{fact}\"."
+                }
+            mems = list_memories()
+            if mems:
+                facts_str = "\n".join(f"• {m['fact']}" for m in mems[:5])
+                return {"status": "completed", "message": f"Personal memories:\n{facts_str}"}
             return {
                 "status": "completed",
-                "message": f"Remembered personal fact: \"{fact}\"." if fact else "Personal memories indexed."
+                "message": "Personal memories indexed."
             }
         elif tool_name == "read_notifications":
             return {

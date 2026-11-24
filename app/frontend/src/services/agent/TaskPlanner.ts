@@ -21,11 +21,11 @@ export const TaskPlanner = {
    * Evaluates whether user utterance contains sequential or conjoined tasks.
    * e.g., "Turn on flashlight and check the battery", "Find restaurants"
    */
-  plan(text: string): MultiStepPlan {
+  plan(text: string, callMode?: "dialer" | "direct"): MultiStepPlan {
     const raw = text.trim();
 
     // 1. Direct single intent check (handles phrases like "Open WhatsApp and send Aashif a hi message")
-    const directIntent = detectToolIntent(raw);
+    const directIntent = detectToolIntent(raw, callMode);
     if (directIntent) {
       return {
         isMultiStep: false,
@@ -62,7 +62,7 @@ export const TaskPlanner = {
     let stepNum = 1;
 
     for (const part of parts) {
-      const intent = detectToolIntent(part);
+      const intent = detectToolIntent(part, callMode);
       if (intent) {
         steps.push({
           id: `step_${stepNum}`,

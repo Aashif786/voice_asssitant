@@ -1,7 +1,7 @@
-import * as SQLite from "expo-sqlite";
 import { Platform } from "react-native";
 import { newId } from "@/src/utils/format";
 import { storage } from "@/src/utils/storage";
+import { getDatabase } from "./database";
 
 export interface PersonalRoutine {
   id: string;
@@ -39,28 +39,8 @@ const DEFAULT_ROUTINES: PersonalRoutine[] = [
   },
 ];
 
-let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 function getDb() {
-  if (Platform.OS === "web") return null;
-  if (!dbPromise) {
-    dbPromise = (async () => {
-      const d = await SQLite.openDatabaseAsync("assistant.db");
-      await d.execAsync(`
-        CREATE TABLE IF NOT EXISTS personal_routines (
-          id TEXT PRIMARY KEY NOT NULL,
-          title TEXT NOT NULL,
-          trigger_type TEXT NOT NULL,
-          time_spec TEXT NOT NULL,
-          days TEXT NOT NULL,
-          actions TEXT NOT NULL,
-          enabled INTEGER NOT NULL DEFAULT 1,
-          created_at INTEGER NOT NULL
-        );
-      `);
-      return d;
-    })();
-  }
-  return dbPromise;
+  return getDatabase();
 }
 
 type RoutineRow = {

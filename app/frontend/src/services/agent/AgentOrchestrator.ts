@@ -5,15 +5,17 @@ import { detectToolIntent } from "@/src/services/ai/toolIntent";
 import { ToolRegistry } from "@/src/services/tools/ToolRegistry";
 import { modelService } from "@/src/services/models/ModelService";
 import { AndroidAssistant } from "@/src/services/android/AndroidAssistant";
+import { VoiceSecurityService } from "@/src/services/voice/VoiceSecurityService";
+import { getStoredSettings } from "@/src/store/settings";
 import type { AIEngine } from "@/src/services/ai/AIEngine.interface";
 import type { AssistantState, Message, ToolCall } from "@/src/types";
 
-import type { AgentOrchestrator, AgentReply } from "./AgentOrchestrator.interface";
+import type { AgentExecutionOptions, AgentOrchestrator, AgentReply } from "./AgentOrchestrator.interface";
 import { contextManager } from "./ContextManager";
 import { ActionValidator } from "./ActionValidator";
 import { TaskPlanner } from "./TaskPlanner";
 
-const ORCHESTRATOR_TIMEOUT_MS = 30000; // 30s maximum execution guard
+const ORCHESTRATOR_TIMEOUT_MS = 60000; // 60s maximum execution guard (allows on-device inference)
 
 /**
  * Intelligent, context-aware on-device agent orchestrator:
@@ -21,33 +23,81 @@ const ORCHESTRATOR_TIMEOUT_MS = 30000; // 30s maximum execution guard
  * Enforces strict timeouts and state completion guarantees.
  */
 class OnDeviceAgentOrchestrator implements AgentOrchestrator {
-  async handle(text: string, history: Message[], onState: (s: AssistantState) => void): Promise<AgentReply> {
+  private async resolveOwnerVerification(options?: AgentExecutionOptions): Promise<boolean> {
+    if (options?.ownerVerified !== undefined) {
+      return options.ownerVerified;
+    }
+
+    const isVoice = options?.isVoice ?? false;
+    if (!isVoice) {
+      // Direct UI / text commands are considered owner-verified
+      return true;
+    }
+
+    const settings = await getStoredSettings();
+    if (!settings.ownerOnlyMode) {
+      // If owner-only mode is false, allow it
+      return true;
+    }
+
+    // If owner-only mode is true and command is from voice, require valid speaker verification
+    return VoiceSecurityService.isLastVoiceVerified();
+  }
+
+  async handle(
+    text: string,
+    history: Message[],
+    onState: (s: AssistantState) => void,
+    options?: AgentExecutionOptions
+  ): Promise<AgentReply> {
     onState("processing");
 
     const executionPromise = (async (): Promise<AgentReply> => {
+      const ownerVerified = await this.resolveOwnerVerification(options);
+      const settings = await getStoredSettings();
+      const callMode = settings.callMode ?? "dialer";
+
       // 0. Active contact disambiguation response check
       const pendingDisambiguation = contextManager.getDisambiguation();
       if (pendingDisambiguation) {
         const choice = contextManager.resolveDisambiguationChoice(text);
         if (choice) {
           contextManager.clearDisambiguation();
+
+          if (!ownerVerified) {
+            return {
+              text: "Unauthorized speaker. Action cancelled under Owner-Only Security Policy.",
+              tool: null,
+            };
+          }
+
           onState("executing");
 
           if (pendingDisambiguation.action === "call") {
-            const hasCallPerm = await AndroidAssistant.hasDirectCallPermission();
-            if (!hasCallPerm) {
-              await AndroidAssistant.requestCallPermission();
+            const isDialerMode = callMode === "dialer";
+            let res;
+            if (isDialerMode) {
+              res = await AndroidAssistant.dial(choice.number);
+            } else {
+              const hasCallPerm = await AndroidAssistant.hasDirectCallPermission();
+              if (!hasCallPerm) {
+                await AndroidAssistant.requestCallPermission();
+              }
+              res = await AndroidAssistant.call(choice.number, true);
             }
-            const res = await AndroidAssistant.call(choice.number, false);
             const toolCall: ToolCall = {
               tool: "call_contact",
-              params: { contact_name: choice.name, number: choice.number, mode: "direct" },
+              params: { contact_name: choice.name, number: choice.number, mode: callMode },
               status: res.success ? "completed" : "unavailable",
-              summary: `Call ${choice.name}`,
+              summary: `${isDialerMode ? "Dial" : "Call"} ${choice.name}`,
             };
             contextManager.updateFromToolCall(toolCall);
             return {
-              text: res.success ? `Calling ${choice.name} (${choice.type})...` : res.message,
+              text: res.success
+                ? isDialerMode
+                  ? `Opened dialer for ${choice.name} (${choice.number}).`
+                  : `Calling ${choice.name} (${choice.type})...`
+                : res.message,
               tool: toolCall,
             };
           } else if (pendingDisambiguation.action === "message") {
@@ -81,13 +131,13 @@ class OnDeviceAgentOrchestrator implements AgentOrchestrator {
       const { resolvedText } = contextManager.resolveCoReferences(text);
 
       // 2. Multi-step task planner
-      const plan = TaskPlanner.plan(resolvedText);
+      const plan = TaskPlanner.plan(resolvedText, callMode);
       if (plan.isMultiStep && plan.steps.length > 1) {
         const messages: string[] = [];
         let pendingCall: ToolCall | null = null;
 
         for (const step of plan.steps) {
-          const validation = await ActionValidator.validate(step.toolCall, true);
+          const validation = await ActionValidator.validate(step.toolCall, ownerVerified);
           if (!validation.valid) {
             return { text: validation.reason || "Action validation failed.", tool: null };
           }
@@ -120,7 +170,7 @@ class OnDeviceAgentOrchestrator implements AgentOrchestrator {
       }
 
       // 3. Single tool-intent detection
-      const intent = detectToolIntent(resolvedText);
+      const intent = detectToolIntent(resolvedText, callMode);
       if (intent) {
         const call: ToolCall = {
           tool: intent.tool,
@@ -129,8 +179,8 @@ class OnDeviceAgentOrchestrator implements AgentOrchestrator {
           summary: intent.summary,
         };
 
-        // Validate action contract
-        const validation = await ActionValidator.validate(call, true);
+        // Validate action contract with actual owner verification state
+        const validation = await ActionValidator.validate(call, ownerVerified);
         if (!validation.valid) {
           return { text: validation.reason || "Unable to proceed with action.", tool: null };
         }
@@ -193,16 +243,17 @@ class OnDeviceAgentOrchestrator implements AgentOrchestrator {
   private async generate(text: string, history: Message[]): Promise<string> {
     const state = await modelService.loadState();
     const selectedLlmId = state.selectedLlm;
+    const settings = await getStoredSettings();
 
     // 1. If on-device local GGUF model is downloaded & ready natively (custom dev build with llama.rn)
     if (selectedLlmId && selectedLlmId !== "llm-companion" && onDeviceLlama.available()) {
       const modelMeta = modelService.findModel(selectedLlmId);
       if (modelMeta?.requiresDownload && state.installed.includes(selectedLlmId)) {
         const modelPath = modelService.pathFor(selectedLlmId);
-        onDeviceLlama.setModel(modelPath, modelMeta.name);
-        if (await onDeviceLlama.ensureReady()) {
+        await onDeviceLlama.setModel(modelPath, modelMeta.name);
+        if (await onDeviceLlama.ensureReady(settings.contextLength)) {
           try {
-            const res = await onDeviceLlama.generate({ text, history });
+            const res = await onDeviceLlama.generate({ text, history, temperature: settings.temperature });
             if (res.text) return res.text;
           } catch {
             /* fall through to backend or rule engine */
@@ -216,7 +267,14 @@ class OnDeviceAgentOrchestrator implements AgentOrchestrator {
       try {
         const backend = await apiRequest<{ text: string; tool: ToolCall | null }>("api/chat/generate", {
           method: "POST",
-          body: JSON.stringify({ text, history, model: selectedLlmId }),
+          body: JSON.stringify({
+            text,
+            history,
+            model: selectedLlmId,
+            temperature: settings.temperature,
+            context_length: settings.contextLength,
+            language: settings.language,
+          }),
         });
         if (backend.data && !backend.error && backend.data.text) {
           return backend.data.text;
@@ -227,16 +285,22 @@ class OnDeviceAgentOrchestrator implements AgentOrchestrator {
     }
 
     // 3. Deterministic offline rule engine fallback
-    const fallback = await ruleEngine.generate({ text, history });
+    const fallback = await ruleEngine.generate({ text, history, temperature: settings.temperature });
     return fallback.text;
   }
 
-  async resolveConfirmation(tool: ToolCall, approved: boolean, onState: (s: AssistantState) => void): Promise<AgentReply> {
+  async resolveConfirmation(
+    tool: ToolCall,
+    approved: boolean,
+    onState: (s: AssistantState) => void,
+    options?: AgentExecutionOptions
+  ): Promise<AgentReply> {
     if (!approved) {
       return { text: "Cancelled. Nothing was changed on your device.", tool: { ...tool, status: "cancelled" } };
     }
 
-    const validation = await ActionValidator.validate(tool, true);
+    const ownerVerified = await this.resolveOwnerVerification(options);
+    const validation = await ActionValidator.validate(tool, ownerVerified);
     if (!validation.valid) {
       return { text: validation.reason || "Action rejected during validation.", tool: { ...tool, status: "cancelled" } };
     }

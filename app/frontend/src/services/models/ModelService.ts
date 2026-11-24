@@ -1,10 +1,51 @@
-import * as FS from "expo-file-system/legacy";
-import { Paths } from "expo-file-system";
-import { Platform } from "react-native";
+import type { apiRequest as ApiRequestType, isBackendConfigured as IsBackendConfiguredType } from "@/src/services/api";
+import type { storage as StorageType } from "@/src/utils/storage";
 
-import { apiRequest, isBackendConfigured } from "@/src/services/api";
-import { nativeInference } from "@/src/services/native";
-import { storage } from "@/src/utils/storage";
+declare const require: any;
+
+let FS: any;
+try {
+  FS = require("expo-file-system/legacy");
+} catch {
+  FS = { documentDirectory: "" };
+}
+
+let Paths: any;
+try {
+  Paths = require("expo-file-system").Paths;
+} catch {
+  Paths = { availableDiskSpace: null };
+}
+
+let Platform: any;
+try {
+  Platform = require("react-native").Platform;
+} catch {
+  Platform = { OS: "web" };
+}
+
+let apiRequest: typeof ApiRequestType = (() => Promise.resolve({ data: null, error: null })) as any;
+let isBackendConfigured: typeof IsBackendConfiguredType = (() => false) as any;
+let getBackendUrl: () => string | null = (() => null);
+try {
+  const api = require("@/src/services/api");
+  apiRequest = api.apiRequest;
+  isBackendConfigured = api.isBackendConfigured;
+  getBackendUrl = api.getBackendUrl;
+} catch {}
+
+let nativeInference: any;
+try {
+  nativeInference = require("@/src/services/native").nativeInference;
+} catch {}
+
+let storage: typeof StorageType = {
+  getItem: ((_k: any, fb: any) => Promise.resolve(fb)) as any,
+  setItem: (() => Promise.resolve(true)) as any,
+} as any;
+try {
+  storage = require("@/src/utils/storage").storage;
+} catch {}
 
 export type ModelType = "llm" | "stt";
 export type ExecutionMode = "local" | "cloud" | "system";
@@ -48,7 +89,6 @@ export interface ModelService {
   discoverFromProvider(query: string, type?: ModelType): Promise<ModelInfo[]>;
 }
 
-const GB = 1024 ** 3;
 const MODELS_DIR = (FS.documentDirectory ?? "") + "models/";
 
 const SELECTED_LLM_KEY = "ova_selected_llm_model";
@@ -158,40 +198,6 @@ export const FRONTIER_MODEL_CATALOGUE: ModelInfo[] = [
     compatibility: { level: "likely", note: "Code, tool calling & structured action specialist" },
     hue: "brand",
     downloadUrl: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
-  },
-  {
-    id: "deepseek-r1-distill-qwen-1.5b",
-    type: "llm",
-    provider: "DeepSeek",
-    family: "DeepSeek-R1",
-    name: "DeepSeek R1 Distill Qwen 1.5B",
-    params: "1.5B",
-    sizeBytes: 1117392896,
-    format: "GGUF",
-    quantization: "Q4_K_M",
-    languages: ["EN", "ZH", "Math", "Reasoning"],
-    execution: "local",
-    requiresDownload: true,
-    compatibility: { level: "likely", note: "Frontier mathematical and chain-of-thought reasoning" },
-    hue: "accent",
-    downloadUrl: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
-  },
-  {
-    id: "deepseek-r1-distill-qwen-7b",
-    type: "llm",
-    provider: "DeepSeek",
-    family: "DeepSeek-R1",
-    name: "DeepSeek R1 Distill Qwen 7B",
-    params: "7B",
-    sizeBytes: 4683074240,
-    format: "GGUF",
-    quantization: "Q4_K_M",
-    languages: ["EN", "ZH", "Math", "Reasoning"],
-    execution: "local",
-    requiresDownload: true,
-    compatibility: { level: "unverified", note: "Powerful on-device reasoning for 8GB+ RAM devices" },
-    hue: "accent",
-    downloadUrl: "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
   },
   {
     id: "llama3.2-1b",
@@ -468,7 +474,8 @@ export const FRONTIER_MODEL_CATALOGUE: ModelInfo[] = [
 async function ensureDir(): Promise<void> {
   if (Platform.OS === "web") return;
   try {
-    const info = await FS.getInfoAsync(MODELS_DIR);
+    const dir = MODELS_DIR.endsWith("/") ? MODELS_DIR.slice(0, -1) : MODELS_DIR;
+    const info = await FS.getInfoAsync(dir);
     if (!info.exists) await FS.makeDirectoryAsync(MODELS_DIR, { intermediates: true });
   } catch {
     /* ignore */
@@ -653,11 +660,22 @@ class HybridModelService implements ModelService {
       }
     }
 
-    const installed: string[] = [...backendInstalled];
+    const installed: string[] = [];
 
+    // On native platforms (Android/iOS), a local model is installed IF AND ONLY IF its weights exist on disk.
+    // Built-in system or cloud models do not require download.
+    // On Web, model execution delegates to companion backend, so backendInstalled applies.
     for (const m of this.catalogue()) {
-      if (!installed.includes(m.id) && (await this.isModelInstalledOnDisk(m))) {
+      if (!m.requiresDownload) {
         installed.push(m.id);
+      } else if (Platform.OS === "web") {
+        if (backendInstalled.includes(m.id)) {
+          installed.push(m.id);
+        }
+      } else {
+        if (await this.isModelInstalledOnDisk(m)) {
+          installed.push(m.id);
+        }
       }
     }
 
@@ -669,11 +687,11 @@ class HybridModelService implements ModelService {
 
     const installedLlms = installed.filter((id) => this.findModel(id)?.type === "llm");
     if (!selectedLlm || (!installed.includes(selectedLlm) && selectedLlm !== "llm-companion")) {
-      selectedLlm = installedLlms[0] ?? "qwen2.5-0.5b";
+      selectedLlm = installedLlms[0] ?? null;
     }
 
     let selectedStt = await storage.getItem<string | null>(SELECTED_STT_KEY, null);
-    if (!selectedStt) {
+    if (!selectedStt || (!installed.includes(selectedStt) && selectedStt !== "stt-system" && selectedStt !== "stt-companion")) {
       selectedStt = "stt-system";
     }
 
@@ -718,23 +736,32 @@ class HybridModelService implements ModelService {
 
     onProgress(0.02);
 
-    // If companion backend is configured, trigger download on backend with live progress
-    if (isBackendConfigured()) {
+    // On Web, native offline models cannot run in-browser; delegate download to companion backend
+    if (Platform.OS === "web") {
+      if (!isBackendConfigured()) {
+        throw new Error("Local model downloads on Web require the Companion Backend to be running.");
+      }
       try {
-        const startRes = await apiRequest(`api/models/download/${id}`, { method: "POST" });
+        const startRes = await apiRequest<{ status: string; message?: string }>(`api/models/download/${id}`, {
+          method: "POST",
+        });
         if (startRes.error) {
           throw new Error(startRes.error);
         }
 
-        // Poll progress until completion
-        for (let i = 0; i < 300; i++) {
+        const maxPollAttempts = 1200;
+        for (let i = 0; i < maxPollAttempts; i++) {
           await new Promise((r) => setTimeout(r, 800));
           const progRes = await apiRequest<{ progress: number; status: string; error?: string }>(
             `api/models/progress/${id}`
           );
           if (progRes.data) {
             onProgress(progRes.data.progress);
-            if (progRes.data.status === "completed" || progRes.data.progress >= 1.0) {
+            if (
+              progRes.data.status === "completed" ||
+              progRes.data.status === "installed" ||
+              progRes.data.progress >= 1.0
+            ) {
               onProgress(1.0);
               return;
             }
@@ -746,26 +773,36 @@ class HybridModelService implements ModelService {
         onProgress(1.0);
         return;
       } catch (err: any) {
-        if (Platform.OS === "web") {
-          throw err;
-        }
-        // If backend download fails on mobile, fall through to native client download
+        throw err;
       }
     }
 
-    if (!model.downloadUrl) {
+    // On Native mobile (Android / iOS): Model weights MUST be downloaded into local device storage
+    await ensureDir();
+    const dest = this.pathFor(id);
+    onProgress(0.02);
+
+    // High-speed transfer: Check if companion backend is running and already has the model file
+    let downloadSourceUrl = model.downloadUrl;
+    if (isBackendConfigured()) {
+      try {
+        const backendBase = getBackendUrl();
+        if (backendBase) {
+          const checkRes = await fetch(`${backendBase}/api/models/file/${id}`, { method: "HEAD" });
+          if (checkRes.ok) {
+            downloadSourceUrl = `${backendBase}/api/models/file/${id}`;
+          }
+        }
+      } catch {
+        /* fallback to model.downloadUrl */
+      }
+    }
+
+    if (!downloadSourceUrl) {
       throw new Error("No download URL available for this model");
     }
 
-    if (Platform.OS === "web") {
-      throw new Error("Local model downloads on Web require the Companion Backend to be running.");
-    }
-
-    await ensureDir();
-    const dest = this.pathFor(id);
-    onProgress(0.01);
-
-    const resumable = FS.createDownloadResumable(model.downloadUrl, dest, {}, (p) => {
+    const resumable = FS.createDownloadResumable(downloadSourceUrl, dest, {}, (p: any) => {
       if (p.totalBytesExpectedToWrite > 0) {
         onProgress(Math.min(0.99, Math.max(0.02, p.totalBytesWritten / p.totalBytesExpectedToWrite)));
       }
@@ -774,7 +811,13 @@ class HybridModelService implements ModelService {
     try {
       const result = await resumable.downloadAsync();
       if (!result) throw new Error("Download did not complete");
-      onProgress(1);
+
+      // Verify file is genuinely on disk and has non-trivial size
+      const info = await FS.getInfoAsync(dest);
+      if (!info.exists || (info.size ?? 0) < 1024 * 1024) {
+        throw new Error("Downloaded model file is incomplete or corrupted");
+      }
+      onProgress(1.0);
     } catch (e) {
       await FS.deleteAsync(dest, { idempotent: true }).catch(() => {});
       throw e;
@@ -801,9 +844,9 @@ class HybridModelService implements ModelService {
   availableBytes(): number | null {
     try {
       const b = Paths.availableDiskSpace;
-      return typeof b === "number" && b > 0 ? b : 25 * GB;
+      return typeof b === "number" && b > 0 ? b : null;
     } catch {
-      return 25 * GB;
+      return null;
     }
   }
 }

@@ -22,6 +22,7 @@ export default function MemoryScreen() {
   const [newFact, setNewFact] = useState("");
   const [category, setCategory] = useState<UserMemory["category"]>("fact");
   const [clearSheet, setClearSheet] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<UserMemory | null>(null);
 
   const loadMemories = useCallback(async () => {
     try {
@@ -109,9 +110,19 @@ export default function MemoryScreen() {
                 icon="bookmark-outline"
                 title={m.object}
                 subtitle={`${m.category.toUpperCase()} · ${new Date(m.createdAt).toLocaleDateString()}`}
-                onPress={() => handleDelete(m.id)}
                 last={idx === filtered.length - 1}
                 testID={`memory-row-${m.id}`}
+                right={
+                  <Pressable
+                    onPress={() => setDeleteTarget(m)}
+                    hitSlop={8}
+                    style={{ padding: 6 }}
+                    testID={`delete-memory-btn-${m.id}`}
+                    accessibilityLabel={`Delete memory: ${m.object}`}
+                  >
+                    <Icon name="trash-outline" size={18} color={colors.error} />
+                  </Pressable>
+                }
               />
             ))
           )}
@@ -169,6 +180,35 @@ export default function MemoryScreen() {
         </Text>
         <SheetButton label="Forget Everything" tone="danger" onPress={handleClearAll} testID="confirm-clear-memories" />
         <SheetButton label="Cancel" tone="ghost" onPress={() => setClearSheet(false)} testID="cancel-clear-memories" />
+      </Sheet>
+
+      {/* Delete Single Memory Modal */}
+      <Sheet
+        visible={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title="Forget this memory?"
+        testID="delete-memory-sheet"
+      >
+        <Text style={s.modalSub}>
+          Are you sure you want to forget: &ldquo;{deleteTarget?.object}&rdquo;?
+        </Text>
+        <SheetButton
+          label="Forget Memory"
+          tone="danger"
+          onPress={async () => {
+            if (deleteTarget) {
+              await handleDelete(deleteTarget.id);
+              setDeleteTarget(null);
+            }
+          }}
+          testID="confirm-delete-memory"
+        />
+        <SheetButton
+          label="Cancel"
+          tone="ghost"
+          onPress={() => setDeleteTarget(null)}
+          testID="cancel-delete-memory"
+        />
       </Sheet>
     </View>
   );

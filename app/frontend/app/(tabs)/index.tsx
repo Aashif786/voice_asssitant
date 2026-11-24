@@ -1,6 +1,6 @@
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useRef, useState, type ElementRef } from "react";
+import { useCallback, useEffect, useRef, useState, type ElementRef } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { KeyboardAvoidingView } from "@/src/components/common/SafeKeyboard";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
@@ -34,17 +34,17 @@ export default function AssistantHome() {
   const inputRef = useRef<ElementRef<typeof TextInput>>(null);
   const bottomChrome = usesNativeTabs ? insets.bottom : 0;
 
-  const ask = useCallback((q: string) => {
+  const ask = useCallback((q: string, fromVoice = false) => {
     const t = q.trim();
     if (!t) return;
     setState("processing");
     setText("");
-    setTimeout(() => router.push({ pathname: "/conversation/[id]", params: { id: "new", q: t } }), 280);
+    setTimeout(() => router.push({ pathname: "/conversation/[id]", params: { id: "new", q: t, fromVoice: fromVoice ? "1" : "0" } }), 280);
   }, [router]);
 
   const handleVoiceCommit = useCallback((spokenText: string) => {
     if (spokenText.trim()) {
-      ask(spokenText);
+      ask(spokenText, true);
     } else {
       setState("idle");
     }
@@ -52,7 +52,9 @@ export default function AssistantHome() {
 
   const voice = useVoiceInput(handleVoiceCommit);
   const voiceRef = useRef(voice);
-  voiceRef.current = voice;
+  useEffect(() => {
+    voiceRef.current = voice;
+  }, [voice]);
   const isListening = voice.status === "listening";
 
   useFocusEffect(
@@ -69,7 +71,7 @@ export default function AssistantHome() {
     if (voice.status === "listening") {
       const spoken = await voice.stop();
       if (spoken.trim()) {
-        ask(spoken);
+        ask(spoken, true);
       } else {
         setState("idle");
       }

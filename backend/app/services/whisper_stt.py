@@ -44,7 +44,8 @@ class STTService:
     def set_model(self, model_name: str) -> bool:
         """Switch active Whisper model (tiny, base, small, medium, large-v3, large-v3-turbo, distil-large-v3)."""
         self.current_model_name = model_name
-        self.engine = f"faster-whisper [{self.current_model_name}]"
+        if self._WhisperModel is not None:
+            self.engine = f"faster-whisper [{self.current_model_name}]"
         return True
 
     def _load_fw(self, model_name: Optional[str] = None):
@@ -52,6 +53,11 @@ class STTService:
         if self._WhisperModel is None:
             return None
         if target not in self._fw_models:
+            # Cap cache size to max 2 models to prevent unbounded RAM growth
+            while len(self._fw_models) >= 2:
+                oldest_key = next((k for k in self._fw_models if k != target), next(iter(self._fw_models)))
+                del self._fw_models[oldest_key]
+
             # Map friendly names to faster-whisper identifiers
             mapped = target
             if "large-v3-turbo" in target.lower():

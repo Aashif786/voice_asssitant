@@ -49,6 +49,26 @@ export const DEFAULT_SETTINGS: Settings = {
 const KEY = "ova_settings_v1";
 const DAYS: Record<Settings["conversationRetention"], number | null> = { forever: null, "30d": 30, "7d": 7 };
 
+let cachedSettings: Settings = DEFAULT_SETTINGS;
+
+export async function getStoredSettings(): Promise<Settings> {
+  try {
+    const raw = await storage.getItem(KEY, "");
+    if (raw) {
+      if (typeof raw === "object") {
+        cachedSettings = { ...DEFAULT_SETTINGS, ...(raw as any) };
+      } else {
+        cachedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(String(raw)) };
+      }
+    }
+  } catch {}
+  return cachedSettings;
+}
+
+export function getCachedSettings(): Settings {
+  return cachedSettings;
+}
+
 type Ctx = { settings: Settings; ready: boolean; update: (p: Partial<Settings>) => void };
 const SettingsContext = createContext<Ctx | null>(null);
 
@@ -69,6 +89,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
           }
         }
       } catch {}
+      cachedSettings = s;
       setSettings(s);
       setColorScheme(s.theme === "system" ? null : s.theme);
       const days = DAYS[s.conversationRetention];
@@ -80,6 +101,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const update = useCallback((p: Partial<Settings>) => {
     setSettings((prev) => {
       const next = { ...prev, ...p };
+      cachedSettings = next;
       storage.setItem(KEY, JSON.stringify(next));
       if (p.theme) setColorScheme(p.theme === "system" ? null : p.theme);
       return next;

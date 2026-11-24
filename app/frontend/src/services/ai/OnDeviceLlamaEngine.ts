@@ -2,6 +2,13 @@ import { LlamaRN, missingNativeReason, type LlamaChatMessage, type LlamaContext 
 
 import type { AIEngine, AIRequest, AIResult } from "./AIEngine.interface";
 
+let FS: any;
+try {
+  FS = require("expo-file-system/legacy");
+} catch {
+  FS = null;
+}
+
 const SYSTEM_PROMPT =
   "You are a concise, helpful on-device AI voice assistant running fully offline. " +
   "Give clear, direct answers without unnecessary fluff.";
@@ -18,6 +25,7 @@ class OnDeviceLlamaEngine implements AIEngine {
   private modelPath: string | null = null;
   private modelName = "On-device model";
   private loading: Promise<boolean> | null = null;
+  private unloading: Promise<void> | null = null;
   private loadError: string | null = null;
   private isGenerating = false;
 
@@ -30,11 +38,11 @@ class OnDeviceLlamaEngine implements AIEngine {
     return LlamaRN !== null;
   }
 
-  /** Point the engine at a downloaded GGUF file. Unloads any previously loaded model. */
-  setModel(path: string | null, name?: string): void {
+  /** Point the engine at a downloaded GGUF file. Serializes and unloads any previously loaded model. */
+  async setModel(path: string | null, name?: string): Promise<void> {
     if (name) this.modelName = name;
     if (path === this.modelPath) return;
-    void this.unload();
+    await this.unload();
     this.modelPath = path;
     this.loadError = null;
   }
@@ -52,15 +60,53 @@ class OnDeviceLlamaEngine implements AIEngine {
     return this.ctx !== null;
   }
 
-  async ensureReady(): Promise<boolean> {
+  async ensureReady(contextLength?: number): Promise<boolean> {
+    // Await any pending unload operation to serialize lifecycle and prevent llama.cpp race conditions
+    if (this.unloading) {
+      await this.unloading;
+    }
     if (this.ctx) return true;
     if (!LlamaRN || !this.modelPath) return false;
     if (this.loading) return this.loading;
 
     const path = this.modelPath;
+    const nCtx = contextLength ?? 2048;
     this.loading = (async () => {
       try {
-        this.ctx = await LlamaRN.initLlama({ model: path, n_ctx: 2048, n_gpu_layers: 0 });
+        if (this.unloading) {
+          await this.unloading;
+        }
+
+        // Verify file genuinely exists on disk before invoking native C++
+        if (FS) {
+          try {
+            const info = await FS.getInfoAsync(path);
+            if (!info.exists || (info.size ?? 0) < 1024 * 1024) {
+              console.warn("[llama] Model file does not exist on disk:", path);
+              this.loadError = "Model file does not exist on device disk. Download it in Models tab.";
+              this.ctx = null;
+              return false;
+            }
+          } catch {
+            /* ignore FS check error */
+          }
+        }
+
+        const cleanPath = path.startsWith("file://") ? path.slice(7) : path;
+
+        // Wrap initLlama with explicit CPU offload to avoid Qualcomm FastRPC/HTP permission crashes on Android
+        const initPromise = LlamaRN.initLlama({
+          model: cleanPath,
+          n_ctx: nCtx,
+          n_gpu_layers: 0,
+          no_gpu_devices: true,
+          devices: ["CPU"],
+        });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Llama model initialization timed out after 60s")), 60000)
+        );
+
+        this.ctx = await Promise.race([initPromise, timeoutPromise]);
         this.loadError = null;
         return true;
       } catch (e: any) {
@@ -127,14 +173,21 @@ class OnDeviceLlamaEngine implements AIEngine {
 
   async unload(): Promise<void> {
     this.isGenerating = false;
+    if (this.unloading) return this.unloading;
+
     const c = this.ctx;
     this.ctx = null;
     if (c) {
-      try {
-        await c.release();
-      } catch {
-        /* ignore */
-      }
+      this.unloading = (async () => {
+        try {
+          await c.release();
+        } catch {
+          /* ignore */
+        } finally {
+          this.unloading = null;
+        }
+      })();
+      return this.unloading;
     }
   }
 }

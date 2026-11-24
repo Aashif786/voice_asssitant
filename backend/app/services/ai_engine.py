@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 from pathlib import Path
@@ -47,7 +48,7 @@ class AIEngine:
             return ("device_control", {"setting": "volume", "value": v}, False, f"Set volume to {v}%")
 
         # 5. Calling
-        call_match = re.search(r"^(?:call|dial|phone)\s+([a-zA-Z0-9\s+]+)$", t, re.IGNORECASE)
+        call_match = re.search(r"^(?:call|dial|phone)\s+([a-zA-Z0-9\s+]+?)[\.\?!]?$", t, re.IGNORECASE)
         if call_match:
             contact = call_match.group(1).strip()
             return ("call_contact", {"contact_name": contact}, True, f"Call {contact}")
@@ -83,10 +84,26 @@ class AIEngine:
                 return ("open_app", {"app_name": candidate}, False, f"Open {candidate}")
 
         # 8. Reminder
-        remind_match = re.search(r"remind me (?:to )?(.+?)(?:\s+(?:at|by|on|tomorrow|tonight|in)\s+(.+))?$", t, re.IGNORECASE)
+        remind_match = re.search(
+            r"remind me (?:to )?(.+?)(?:\s+(?:at|by|on|in)\s+(.+?)|\s+(tomorrow|tonight)(?:\s+(?:at|by|in)\s+(.+))?)?[\.\?!]?$",
+            t,
+            re.IGNORECASE
+        )
         if remind_match:
             task = remind_match.group(1).strip()
-            time_spec = remind_match.group(2).strip() if remind_match.group(2) else "Later today"
+            time_part1 = remind_match.group(2)
+            time_day = remind_match.group(3)
+            time_sub = remind_match.group(4)
+
+            if time_part1:
+                time_spec = time_part1.strip()
+            elif time_day and time_sub:
+                time_spec = f"{time_day.strip()} at {time_sub.strip()}"
+            elif time_day:
+                time_spec = time_day.strip().capitalize()
+            else:
+                time_spec = "Later today"
+
             return (
                 "create_reminder",
                 {"task": task.capitalize(), "time": time_spec},
@@ -202,7 +219,7 @@ class AIEngine:
         # Check if local_llm server is already alive
         server_ok = False
         if model_file and target_id:
-            server_ok = local_llm.ensure_server(target_id, model_file)
+            server_ok = await asyncio.to_thread(local_llm.ensure_server, target_id, model_file)
         elif local_llm.is_running():
             server_ok = True
 
@@ -241,7 +258,8 @@ class AIEngine:
                 prompt_parts.append(f"User: {t}")
                 prompt = "\n".join(prompt_parts)
 
-                response = self.gemini_client.models.generate_content(
+                response = await asyncio.to_thread(
+                    self.gemini_client.models.generate_content,
                     model="gemini-2.5-flash",
                     contents=prompt
                 )

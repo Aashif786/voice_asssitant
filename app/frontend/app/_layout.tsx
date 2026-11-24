@@ -16,7 +16,9 @@ if (typeof (globalThis as any).Buffer === "undefined") {
   (globalThis as any).Buffer = Buffer;
 }
 
-LogBox.ignoreAllLogs(true);
+if (!__DEV__) {
+  LogBox.ignoreAllLogs(true);
+}
 
 function Shell() {
   const { scheme, colors } = useTheme();

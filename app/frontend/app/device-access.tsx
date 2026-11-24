@@ -128,7 +128,7 @@ export default function DeviceAccessScreen() {
               await checkStatuses();
               if (!res && !status.contacts) {
                 // If permission is permanently denied or OS requires manual toggle
-                AndroidAssistant.openSettings("apps");
+                AndroidAssistant.openSettings("app");
               }
             }}
             testID="permission-contacts"
@@ -144,7 +144,7 @@ export default function DeviceAccessScreen() {
               await checkStatuses();
               if (!res && !status.directCalls) {
                 // If permission is permanently denied or OS requires manual toggle
-                AndroidAssistant.openSettings("apps");
+                AndroidAssistant.openSettings("app");
               }
             }}
             last
@@ -180,7 +180,7 @@ export default function DeviceAccessScreen() {
           <SheetButton
             label="Open Android App Settings"
             testID="btn-open-app-settings"
-            onPress={() => AndroidAssistant.openSettings("apps")}
+            onPress={() => AndroidAssistant.openSettings("app")}
           />
           <SheetButton
             label="Open Notification Access Settings"

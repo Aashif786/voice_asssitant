@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { KeyboardAwareScrollView } from "@/src/components/common/SafeKeyboard";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -26,6 +26,19 @@ export default function VoiceSecurityScreen() {
   const [deleteSheet, setDeleteSheet] = useState(false);
   const [picker, setPicker] = useState<OptionPicker<any> | null>(null);
 
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Stop active recording and clear timer handles on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      void RealVoiceCaptureService.cancel();
+    };
+  }, []);
+
   const isEnrolled = settings.voiceEnrolled;
 
   const startEnrollmentFlow = async () => {
@@ -43,12 +56,26 @@ export default function VoiceSecurityScreen() {
       return;
     }
 
-    setTimeout(async () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    timerRef.current = setTimeout(async () => {
+      timerRef.current = null;
       const audioResult = await RealVoiceCaptureService.stop();
       setRecording(false);
       if (!audioResult?.base64Audio) return;
 
-      const res = await VoiceSecurityService.addSample(audioResult.base64Audio);
+      if (!audioResult.isRawPcm) {
+        setTestResult({
+          score: 0,
+          verified: false,
+          message: "Voice enrollment requires raw 16 kHz PCM audio. Compressed fallback audio (.m4a/.webm) cannot be used.",
+        });
+        return;
+      }
+
+      const res = await VoiceSecurityService.addSample(audioResult);
       if (res.success) {
         if (step + 1 < CALIBRATION_PROMPTS.length) {
           setStep(step + 1);
@@ -59,6 +86,13 @@ export default function VoiceSecurityScreen() {
             setEnrolling(false);
           }
         }
+      } else {
+        const detail = res.reason ? ` (${res.reason})` : "";
+        setTestResult({
+          score: 0,
+          verified: false,
+          message: `${res.message || "Voice sample enrollment failed"}${detail}`,
+        });
       }
     }, 3000);
   };
@@ -71,13 +105,27 @@ export default function VoiceSecurityScreen() {
       return;
     }
 
-    setTimeout(async () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    timerRef.current = setTimeout(async () => {
+      timerRef.current = null;
       const audioResult = await RealVoiceCaptureService.stop();
       setRecording(false);
       if (!audioResult?.base64Audio) return;
 
+      if (!audioResult.isRawPcm) {
+        setTestResult({
+          score: 0,
+          verified: false,
+          message: "Speaker verification requires raw 16 kHz PCM audio. Compressed fallback audio (.m4a/.webm) cannot be verified.",
+        });
+        return;
+      }
+
       const res = await VoiceSecurityService.verifySpeaker(
-        audioResult.base64Audio,
+        audioResult,
         settings.voiceVerificationThreshold,
         settings.antiSpoofingEnabled
       );

@@ -1,4 +1,4 @@
-package com.emergent.handsfreeai.assistant
+package com.handsfreeai.assistant
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -21,14 +21,18 @@ class AssistantForegroundService : Service() {
         const val CHANNEL_ID = "assistant_listening_channel"
         const val NOTIFICATION_ID = 2001
 
-        const val ACTION_START = "com.emergent.handsfreeai.assistant.START"
-        const val ACTION_STOP = "com.emergent.handsfreeai.assistant.STOP"
+        const val ACTION_START = "com.handsfreeai.assistant.START"
+        const val ACTION_STOP = "com.handsfreeai.assistant.STOP"
 
         const val EXTRA_PHRASE = "extra_phrase"
         const val EXTRA_SENSITIVITY = "extra_sensitivity"
 
         @Volatile
         var isServiceRunning = false
+            private set
+
+        @Volatile
+        var activeInstance: AssistantForegroundService? = null
             private set
 
         fun startListening(context: Context, phrase: String, sensitivity: String) {
@@ -45,11 +49,20 @@ class AssistantForegroundService : Service() {
         }
 
         fun stopListening(context: Context) {
-            val intent = Intent(context, AssistantForegroundService::class.java).apply {
-                action = ACTION_STOP
+            // Avoid throwing IllegalStateException on Android 8+ when stopping while app is in background.
+            // When isServiceRunning is false, avoid redundant calls.
+            // Using context.stopService(intent) cleanly terminates the service without background start restrictions.
+            if (!isServiceRunning) return
+            try {
+                val intent = Intent(context, AssistantForegroundService::class.java)
+                context.stopService(intent)
+            } catch (e: Exception) {
+                android.util.Log.w("AssistantForegroundService", "Error stopping listening service: ${e.message}")
             }
-            context.startService(intent)
         }
+
+        fun requestTransientFocus(): Boolean = activeInstance?.requestTransientAudioFocus() ?: false
+        fun abandonTransientFocus() { activeInstance?.abandonTransientAudioFocus() }
     }
 
     private var phrase: String = "Hey Assistant"
@@ -62,19 +75,22 @@ class AssistantForegroundService : Service() {
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS,
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                wakeWordDetector.stop()
+                // Focus lost during active playback/capture
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                wakeWordDetector.start(phrase, sensitivity)
+                // Focus regained
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         createNotificationChannel()
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        requestAudioFocus()
+        // Permanent AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK removed:
+        // Passive wake-word monitoring must not continuously hold audio focus or duck media.
+        // Audio focus is requested transiently only during active command capture / speech playback.
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -114,14 +130,23 @@ class AssistantForegroundService : Service() {
     override fun onDestroy() {
         isServiceRunning = false
         wakeWordDetector.stop()
-        abandonAudioFocus()
+        abandonTransientAudioFocus()
+        if (activeInstance == this) {
+            activeInstance = null
+        }
         super.onDestroy()
     }
 
     private fun stopForegroundService() {
         isServiceRunning = false
         wakeWordDetector.stop()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        abandonTransientAudioFocus()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
         stopSelf()
     }
 
@@ -172,36 +197,51 @@ class AssistantForegroundService : Service() {
             .build()
     }
 
-    private fun requestAudioFocus() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val playbackAttributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build()
+    fun requestTransientAudioFocus(): Boolean {
+        if (audioManager == null) {
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        }
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val playbackAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
 
-            focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                .setAudioAttributes(playbackAttributes)
-                .setAcceptsDelayedFocusGain(true)
-                .setOnAudioFocusChangeListener(audioFocusChangeListener)
-                .build()
+                focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(playbackAttributes)
+                    .setAcceptsDelayedFocusGain(false)
+                    .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                    .build()
 
-            audioManager?.requestAudioFocus(focusRequest!!)
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager?.requestAudioFocus(
-                audioFocusChangeListener,
-                AudioManager.STREAM_VOICE_CALL,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
-            )
+                val result = audioManager?.requestAudioFocus(focusRequest!!)
+                result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            } else {
+                @Suppress("DEPRECATION")
+                val result = audioManager?.requestAudioFocus(
+                    audioFocusChangeListener,
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+                )
+                result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("AssistantForegroundService", "Failed to request transient audio focus: ${e.message}")
+            false
         }
     }
 
-    private fun abandonAudioFocus() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager?.abandonAudioFocus(audioFocusChangeListener)
+    fun abandonTransientAudioFocus() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+                focusRequest = null
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager?.abandonAudioFocus(audioFocusChangeListener)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("AssistantForegroundService", "Failed to abandon audio focus: ${e.message}")
         }
     }
 }

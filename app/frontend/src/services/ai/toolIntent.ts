@@ -16,7 +16,7 @@ const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
  * Routes device control, application management, communication and productivity
  * commands directly on-device. Falls back to local LLM when no pattern matches.
  */
-export function detectToolIntent(text: string): DetectedIntent | null {
+export function detectToolIntent(text: string, callMode?: "dialer" | "direct"): DetectedIntent | null {
   const t = text.trim();
   const l = t.toLowerCase();
 
@@ -166,15 +166,17 @@ export function detectToolIntent(text: string): DetectedIntent | null {
   }
 
   // 6. Calling & dialer
-  const callMatch = t.match(/^(?:call|dial|phone)\s+([a-zA-Z0-9\s+]+)$/i);
+  const callMatch = t.match(/^(?:call|dial|phone)\s+([a-zA-Z0-9\s+]+?)[\.\?!]?$/i);
   if (callMatch) {
     const target = callMatch[1].trim();
+    const mode = callMode ?? "dialer";
+    const isDialer = mode === "dialer";
     return {
       tool: "call_contact",
-      params: { contact_name: target, mode: "direct" },
+      params: { contact_name: target, mode },
       requiresConfirmation: false,
-      summary: `Call ${target}`,
-      intro: `Calling ${target}...`,
+      summary: `${isDialer ? "Dial" : "Call"} ${target}`,
+      intro: isDialer ? `Opening dialer for ${target}...` : `Calling ${target}...`,
     };
   }
 
@@ -272,10 +274,20 @@ export function detectToolIntent(text: string): DetectedIntent | null {
   }
 
   // 8. Reminder
-  const remind = t.match(/remind me (?:to )?(.+?)(?:\s+(?:at|by|on|tomorrow|tonight|in)\s+(.+))?$/i);
+  const remind = t.match(
+    /remind me (?:to )?(.+?)(?:\s+(?:at|by|on|in)\s+(.+?)|\s+(tomorrow|tonight)(?:\s+(?:at|by|in)\s+(.+))?)?[\.\?!]?$/i
+  );
   if (remind) {
     const task = cap(remind[1].trim());
-    const time = remind[2] ? remind[2].trim() : "Later today";
+    let time = "Later today";
+    if (remind[2]) {
+      time = remind[2].trim();
+    } else if (remind[3] && remind[4]) {
+      time = `${remind[3].trim()} at ${remind[4].trim()}`;
+    } else if (remind[3]) {
+      time = cap(remind[3].trim());
+    }
+
     return {
       tool: "create_reminder",
       params: { task, time },

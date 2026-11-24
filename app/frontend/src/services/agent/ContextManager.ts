@@ -23,7 +23,7 @@ export interface ConversationContext {
   lastExecutedTool?: string;
 }
 
-class ContextManager {
+export class ContextManager {
   private context: ConversationContext = {};
   private pendingDisambiguation: DisambiguationContext | null = null;
 
@@ -182,8 +182,8 @@ class ContextManager {
     if (this.context.lastReferencedContact) {
       const contact = this.context.lastReferencedContact;
 
-      // "tell him / her / them that..."
-      const tellMatch = resolved.match(/\b(?:tell|message|text|inform)\s+(?:him|her|them)\s+(.+)/i);
+      // "tell him / her / them [that]..."
+      const tellMatch = resolved.match(/\b(?:tell|message|text|inform)\s+(?:him|her|them)\s+(?:that\s+)?(.+)/i);
       if (tellMatch) {
         resolved = `message ${contact} that ${tellMatch[1]}`;
         contactResolved = contact;

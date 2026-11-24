@@ -19,7 +19,7 @@ export default function TabLayout() {
         onPress={() => setSidebarOpen(true)}
         style={{
           position: "absolute",
-          top: insets.top + 10,
+          top: insets.top + 12,
           left: 16,
           width: 40,
           height: 40,
@@ -32,6 +32,7 @@ export default function TabLayout() {
           zIndex: 50,
         }}
         testID="hamburger-menu"
+        accessibilityLabel="Open navigation menu"
       >
         <Icon name="menu-outline" size={22} color={colors.onSurface} />
       </Pressable>

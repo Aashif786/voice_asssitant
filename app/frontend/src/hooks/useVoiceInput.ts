@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { audioCapture } from "@/src/services/audio/ExpoAudioCapture";
 import { speechRecognition } from "@/src/services/voice";
+import { useSettings } from "@/src/store/settings";
 
 export type VoiceStatus = "idle" | "requesting_permission" | "preparing" | "listening" | "processing" | "error" | "unavailable";
 
@@ -15,6 +16,7 @@ export type VoiceStatus = "idle" | "requesting_permission" | "preparing" | "list
  * - Guaranteed audio resource release
  */
 export function useVoiceInput(onAutoCommit?: (text: string) => void) {
+  const { settings } = useSettings();
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [partial, setPartial] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +133,8 @@ export function useVoiceInput(onAutoCommit?: (text: string) => void) {
       }
     }, 20000);
 
-    const res = await speechRecognition.start("en", (e) => {
+    const lang = settings?.language?.toLowerCase().startsWith("en") ? "en" : (settings?.language || "en");
+    const res = await speechRecognition.start(lang, (e) => {
       if (!isListeningRef.current) return;
 
       if (e.text) {
@@ -168,7 +171,7 @@ export function useVoiceInput(onAutoCommit?: (text: string) => void) {
       setStatus("error");
       setError(res.reason ?? "Could not start microphone listening.");
     }
-  }, [stop]);
+  }, [stop, settings?.language]);
 
   return {
     status,

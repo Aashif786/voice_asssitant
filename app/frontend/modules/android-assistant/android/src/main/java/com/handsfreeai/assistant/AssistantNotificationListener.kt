@@ -1,4 +1,4 @@
-package com.emergent.handsfreeai.assistant
+package com.handsfreeai.assistant
 
 import android.app.Notification
 import android.content.Context

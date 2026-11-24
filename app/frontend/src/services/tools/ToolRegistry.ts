@@ -3,6 +3,7 @@ import { apiRequest } from "@/src/services/api";
 import { AndroidAssistant } from "@/src/services/android/AndroidAssistant";
 import { MemoryRepository } from "@/src/services/storage/MemoryRepository";
 import { DailyBriefingService } from "@/src/services/agent/DailyBriefingService";
+import { getCachedSettings } from "@/src/store/settings";
 
 export interface ToolResult {
   status: ToolStatus;
@@ -174,13 +175,14 @@ const TOOLS: Record<ToolName, ToolDefinition> = {
       // 1. Direct number check (e.g. contains digits only)
       const digitsOnly = query.replace(/[^0-9+]/g, "");
       if (digitsOnly.length >= 7) {
-        const isDialerMode = p.mode === "dialer" || p.mode === "dial";
+        const mode = p.mode || getCachedSettings().callMode || "dialer";
+        const isDialerMode = mode === "dialer" || mode === "dial";
         const res = isDialerMode
           ? await AndroidAssistant.dial(digitsOnly)
-          : await AndroidAssistant.call(digitsOnly, false);
+          : await AndroidAssistant.call(digitsOnly, true);
         return {
           status: res.success ? "completed" : "unavailable",
-          message: res.success ? `Calling ${digitsOnly}...` : res.message,
+          message: res.success ? `${isDialerMode ? "Dialing" : "Calling"} ${digitsOnly}...` : res.message,
         };
       }
 
@@ -210,15 +212,18 @@ const TOOLS: Record<ToolName, ToolDefinition> = {
         };
       }
 
-      // Exactly 1 match - call directly
+      // Exactly 1 match - call directly or via dialer
       const target = matches[0];
-      const isDialerMode = p.mode === "dialer" || p.mode === "dial";
+      const mode = p.mode || getCachedSettings().callMode || "dialer";
+      const isDialerMode = mode === "dialer" || mode === "dial";
       const res = isDialerMode
         ? await AndroidAssistant.dial(target.number)
-        : await AndroidAssistant.call(target.number, false);
+        : await AndroidAssistant.call(target.number, true);
       return {
         status: res.success ? "completed" : "unavailable",
-        message: res.success ? `Calling ${target.name} (${target.type})...` : res.message,
+        message: res.success
+          ? `${isDialerMode ? "Opened dialer for" : "Calling"} ${target.name} (${target.type})...`
+          : res.message,
       };
     },
   },

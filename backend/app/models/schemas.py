@@ -64,7 +64,7 @@ class ModelInfo(BaseModel):
     downloadUrl: Optional[str] = None
 
 class CustomModelRequest(BaseModel):
-    id: str
+    id: str = Field(..., pattern=r"^[a-zA-Z0-9._-]+$")
     name: str
     type: str = "llm"  # "llm" | "stt"
     provider: str = "Hugging Face"

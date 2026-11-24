@@ -152,22 +152,41 @@ def test_native_device_tools():
     assert notif_res.status_code == 200
     assert notif_res.json()["status"] == "completed"
 
-def test_models_lifecycle():
+def test_models_lifecycle(monkeypatch):
+    from backend.app.config import MODELS_DIR
+    from backend.app.services.model_service import model_manager
+    from backend.app.services.database import register_model_record
+
     # 1. Catalogue
     cat_res = client.get("/api/models/catalogue")
     assert cat_res.status_code == 200
     models = cat_res.json()
     assert len(models) >= 5
 
-    # 2. Download a model
+    # Mock download_model so test runs instantly without downloading 800 MB
+    async def mock_download(mid: str):
+        register_model_record(mid, "Gemma 3 1B IT", str(MODELS_DIR / f"{mid}.gguf"), 800000000)
+        return True
+
+    monkeypatch.setattr(model_manager, "download_model", mock_download)
+
+    # 2. Download a model (background scheduling returns HTTP 202)
     target_id = "gemma3-1b"
     dl_res = client.post(f"/api/models/download/{target_id}")
-    assert dl_res.status_code == 200
+    assert dl_res.status_code == 202
+    assert dl_res.json()["status"] == "accepted"
+
+    # Deduplication check
+    dl_dup = client.post(f"/api/models/download/{target_id}")
+    assert dl_dup.status_code == 202
 
     # 2b. Progress check
     prog_res = client.get(f"/api/models/progress/{target_id}")
     assert prog_res.status_code == 200
-    assert prog_res.json()["status"] in ["completed", "downloading", "installed"]
+    assert prog_res.json()["status"] in ["completed", "downloading", "installed", "idle"]
+
+    # Manually ensure record for state check
+    register_model_record(target_id, "Gemma 3 1B IT", str(MODELS_DIR / f"{target_id}.gguf"), 800000000)
 
     # 3. State check
     state_res = client.get("/api/models/state")

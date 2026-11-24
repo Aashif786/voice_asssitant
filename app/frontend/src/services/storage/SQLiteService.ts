@@ -1,25 +1,15 @@
-import * as SQLite from "expo-sqlite";
-
 import type { Conversation, Message, ToolCall } from "@/src/types";
 import { newId } from "@/src/utils/format";
 
 import type { ConversationRepository } from "./ConversationRepository.interface";
+import { getDatabase } from "./database";
 
-let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
-function db() {
-  if (!dbPromise) {
-    dbPromise = (async () => {
-      const d = await SQLite.openDatabaseAsync("assistant.db");
-      await d.execAsync(`
-        PRAGMA journal_mode = WAL;
-        CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_message TEXT NOT NULL DEFAULT '');
-        CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL, tool TEXT);
-        CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages (conversation_id, created_at);
-      `);
-      return d;
-    })();
-  }
-  return dbPromise;
+export { getDatabase };
+
+async function db() {
+  const d = await getDatabase();
+  if (!d) throw new Error("SQLite database unavailable in this environment");
+  return d;
 }
 
 type ConvRow = { id: string; title: string; created_at: number; updated_at: number; last_message: string };

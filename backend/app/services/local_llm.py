@@ -1,16 +1,31 @@
+import hashlib
+import io
+import logging
 import os
+import platform
 import signal
 import subprocess
 import sys
 import time
+import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Dict, List, Optional
 import httpx
+import psutil
 from backend.app.config import BASE_DIR, MODELS_DIR
+
+logger = logging.getLogger(__name__)
 
 BIN_DIR = BASE_DIR / "bin"
 IS_WINDOWS = sys.platform.startswith("win")
 LLAMA_SERVER_BIN = BIN_DIR / ("llama-server.exe" if IS_WINDOWS else "llama-server")
+
+# Pinned SHA-256 checksums for llama.cpp release b12470 binaries.
+# Can also be specified via the VA_LLAMA_CPP_SHA256 environment variable.
+PINNED_LLAMA_CHECKSUMS: Dict[str, str] = {
+    # Populated or overridden via VA_LLAMA_CPP_SHA256
+}
 
 class LocalLLMManager:
     """
@@ -30,11 +45,8 @@ class LocalLLMManager:
         if self.is_binary_available():
             return True
         try:
-            import io
-            import platform
-            import urllib.request
-            import zipfile
             BIN_DIR.mkdir(parents=True, exist_ok=True)
+            bin_dir_resolved = BIN_DIR.resolve()
 
             machine = platform.machine().lower()
             if IS_WINDOWS:
@@ -48,14 +60,40 @@ class LocalLLMManager:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = resp.read()
-                with zipfile.ZipFile(io.BytesIO(data)) as z:
-                    z.extractall(BIN_DIR)
+
+            # Verify downloaded archive against pinned or configured SHA-256 checksum
+            expected_sha256 = os.getenv("VA_LLAMA_CPP_SHA256") or PINNED_LLAMA_CHECKSUMS.get(asset)
+            if not expected_sha256:
+                logger.error(
+                    "Binary archive verification failed: no pinned SHA-256 checksum configured for '%s'. "
+                    "Set VA_LLAMA_CPP_SHA256 env var to proceed.",
+                    asset
+                )
+                return False
+
+            computed_sha256 = hashlib.sha256(data).hexdigest().lower()
+            if computed_sha256 != expected_sha256.lower():
+                logger.error(
+                    "Binary archive checksum mismatch for '%s': expected %s, got %s",
+                    asset, expected_sha256, computed_sha256
+                )
+                return False
+
+            # Validate zip member paths against Zip Slip before extraction
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                for member in z.infolist():
+                    member_target = (bin_dir_resolved / member.filename).resolve()
+                    if not member_target.is_relative_to(bin_dir_resolved):
+                        logger.error("Zip Slip attempt detected in member '%s'", member.filename)
+                        return False
+                z.extractall(bin_dir_resolved)
 
             if not IS_WINDOWS and LLAMA_SERVER_BIN.exists():
                 LLAMA_SERVER_BIN.chmod(0o755)
 
             return self.is_binary_available()
-        except Exception:
+        except Exception as e:
+            logger.error("Failed to ensure llama-server binary: %s", str(e))
             return False
 
     def check_health(self) -> bool:
@@ -104,23 +142,57 @@ class LocalLLMManager:
         return False
 
     def kill_port_holder(self) -> None:
-        """Forcefully terminates any process occupying the local server port."""
+        """Safely terminates only llama-server processes occupying the local server port or tracked child PIDs."""
+        # 1. Terminate tracked subprocess if active
+        if self.process is not None:
+            try:
+                if self.process.poll() is None:
+                    self.process.terminate()
+                    try:
+                        self.process.wait(timeout=2)
+                    except Exception:
+                        self.process.kill()
+            except Exception:
+                pass
+            self.process = None
+
+        # 2. Inspect processes safely via psutil matching llama-server (no shell=True)
         try:
-            if IS_WINDOWS:
-                output = subprocess.check_output(
-                    f"netstat -ano | findstr :{self.port}",
-                    shell=True,
-                    text=True,
-                    stderr=subprocess.DEVNULL
-                )
-                for line in output.strip().splitlines():
-                    parts = line.strip().split()
-                    if len(parts) >= 5 and "LISTENING" in parts:
-                        pid = parts[-1]
-                        if pid.isdigit() and int(pid) != os.getpid():
-                            subprocess.run(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                subprocess.run(f"lsof -ti :{self.port} | xargs kill -9", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            current_pid = os.getpid()
+            try:
+                for conn in psutil.net_connections(kind="inet"):
+                    if conn.laddr and conn.laddr.port == self.port and conn.status == psutil.CONN_LISTEN:
+                        pid = conn.pid
+                        if pid and pid != current_pid:
+                            try:
+                                proc = psutil.Process(pid)
+                                p_name = (proc.name() or "").lower()
+                                if "llama-server" in p_name or "llama_server" in p_name:
+                                    proc.terminate()
+                                    try:
+                                        proc.wait(timeout=2)
+                                    except psutil.TimeoutExpired:
+                                        proc.kill()
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
+            except (psutil.AccessDenied, Exception):
+                for proc in psutil.process_iter(["pid", "name"]):
+                    try:
+                        p_name = (proc.info.get("name") or "").lower()
+                        if ("llama-server" in p_name or "llama_server" in p_name) and proc.info.get("pid") != current_pid:
+                            try:
+                                for c in proc.net_connections(kind="inet"):
+                                    if c.laddr and c.laddr.port == self.port:
+                                        proc.terminate()
+                                        try:
+                                            proc.wait(timeout=2)
+                                        except psutil.TimeoutExpired:
+                                            proc.kill()
+                                        break
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
         except Exception:
             pass
 

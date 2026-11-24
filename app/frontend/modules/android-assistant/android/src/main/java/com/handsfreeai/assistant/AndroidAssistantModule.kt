@@ -1,15 +1,20 @@
-package com.emergent.handsfreeai.assistant
+package com.handsfreeai.assistant
 
 import android.Manifest
 import android.app.role.RoleManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import android.speech.SpeechRecognizer
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import expo.modules.interfaces.permissions.PermissionsStatus
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -25,6 +30,53 @@ class AndroidAssistantModule : Module() {
     private val wakeWordDetector by lazy { WakeWordDetector(context) }
 
     private var speechRecognizerManager: SpeechRecognizerManager? = null
+    private var wakeWordReceiver: BroadcastReceiver? = null
+
+    private fun registerWakeWordReceiver() {
+        if (wakeWordReceiver != null) return
+        try {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(c: Context?, intent: Intent?) {
+                    if (intent?.action == WakeWordDetector.ACTION_WAKE_WORD_DETECTED) {
+                        val phrase = intent.getStringExtra("phrase") ?: "Hey Assistant"
+                        val timestamp = intent.getLongExtra("timestamp", System.currentTimeMillis())
+                        val score = intent.getDoubleExtra("score", 1.0)
+                        Log.d("AndroidAssistantModule", "Emitting onWakeWordDetected to JS: phrase='$phrase', score=$score")
+                        this@AndroidAssistantModule.sendEvent(
+                            "onWakeWordDetected",
+                            mapOf(
+                                "phrase" to phrase,
+                                "timestamp" to timestamp,
+                                "score" to score
+                            )
+                        )
+                    }
+                }
+            }
+            val filter = IntentFilter(WakeWordDetector.ACTION_WAKE_WORD_DETECTED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            }
+            wakeWordReceiver = receiver
+            Log.d("AndroidAssistantModule", "Wake-word BroadcastReceiver registered successfully.")
+        } catch (e: Exception) {
+            Log.w("AndroidAssistantModule", "Failed to register wake-word receiver: ${e.message}")
+        }
+    }
+
+    private fun unregisterWakeWordReceiver() {
+        wakeWordReceiver?.let {
+            try {
+                context.unregisterReceiver(it)
+                Log.d("AndroidAssistantModule", "Wake-word BroadcastReceiver unregistered.")
+            } catch (e: Exception) {
+                // Ignore if already unregistered
+            }
+            wakeWordReceiver = null
+        }
+    }
 
     override fun definition() = ModuleDefinition {
         Name("AndroidAssistant")
@@ -35,6 +87,20 @@ class AndroidAssistantModule : Module() {
             "onSpeechFinalResult",
             "onSpeechError"
         )
+
+        OnCreate {
+            try {
+                registerWakeWordReceiver()
+            } catch (e: Exception) {
+                // ReactContext might be lazily bound; will register on first start call
+            }
+        }
+
+        OnDestroy {
+            unregisterWakeWordReceiver()
+            speechRecognizerManager?.destroy()
+            speechRecognizerManager = null
+        }
 
         // 1. Applications
         AsyncFunction("getInstalledApps") {
@@ -62,12 +128,33 @@ class AndroidAssistantModule : Module() {
             contactsManager.hasPermission()
         }
 
-        AsyncFunction("requestContactsPermission") {
-            val activity = appContext.currentActivity ?: return@AsyncFunction false
+        AsyncFunction("requestContactsPermission") { promise: Promise ->
             val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
-            if (granted) return@AsyncFunction true
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), 103)
-            true
+            if (granted) {
+                promise.resolve(true)
+                return@AsyncFunction
+            }
+
+            val permissions = appContext.permissions
+            if (permissions != null) {
+                permissions.askForPermissions(
+                    { result ->
+                        val resp = result[Manifest.permission.READ_CONTACTS]
+                        val isGranted = resp?.status == PermissionsStatus.GRANTED
+                        promise.resolve(isGranted)
+                    },
+                    Manifest.permission.READ_CONTACTS
+                )
+            } else {
+                val activity = appContext.currentActivity
+                if (activity == null) {
+                    promise.resolve(false)
+                    return@AsyncFunction
+                }
+                ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), 103)
+                val postGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+                promise.resolve(postGranted)
+            }
         }
 
         AsyncFunction("searchContacts") { query: String ->
@@ -79,12 +166,33 @@ class AndroidAssistantModule : Module() {
             callManager.hasDirectCallPermission()
         }
 
-        AsyncFunction("requestCallPermission") {
-            val activity = appContext.currentActivity ?: return@AsyncFunction false
+        AsyncFunction("requestCallPermission") { promise: Promise ->
             val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
-            if (granted) return@AsyncFunction true
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.CALL_PHONE), 102)
-            true
+            if (granted) {
+                promise.resolve(true)
+                return@AsyncFunction
+            }
+
+            val permissions = appContext.permissions
+            if (permissions != null) {
+                permissions.askForPermissions(
+                    { result ->
+                        val resp = result[Manifest.permission.CALL_PHONE]
+                        val isGranted = resp?.status == PermissionsStatus.GRANTED
+                        promise.resolve(isGranted)
+                    },
+                    Manifest.permission.CALL_PHONE
+                )
+            } else {
+                val activity = appContext.currentActivity
+                if (activity == null) {
+                    promise.resolve(false)
+                    return@AsyncFunction
+                }
+                ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.CALL_PHONE), 102)
+                val postGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+                promise.resolve(postGranted)
+            }
         }
 
         AsyncFunction("dial") { number: String ->
@@ -179,6 +287,7 @@ class AndroidAssistantModule : Module() {
         }
 
         AsyncFunction("startWakeWord") { phrase: String, sensitivity: String ->
+            registerWakeWordReceiver()
             wakeWordDetector.start(phrase, sensitivity)
         }
 
@@ -187,14 +296,15 @@ class AndroidAssistantModule : Module() {
         }
 
         // 8. Foreground Background Service & System Assistant
+        // Note: AssistantForegroundService alone owns AudioRecord capture when listening in foreground service
+        // to prevent dual mic contention.
         AsyncFunction("startForegroundListening") { phrase: String, sensitivity: String ->
-            wakeWordDetector.start(phrase, sensitivity)
+            registerWakeWordReceiver()
             AssistantForegroundService.startListening(context, phrase, sensitivity)
             mapOf("ok" to true, "message" to "Foreground listening service started.")
         }
 
         AsyncFunction("stopForegroundListening") {
-            wakeWordDetector.stop()
             AssistantForegroundService.stopListening(context)
             mapOf("ok" to true, "message" to "Foreground listening service stopped.")
         }

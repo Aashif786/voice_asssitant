@@ -1,4 +1,4 @@
-package com.emergent.handsfreeai.assistant
+package com.handsfreeai.assistant
 
 import android.content.Context
 import android.content.Intent
@@ -123,26 +123,32 @@ class AppLauncher(private val context: Context) {
         )
     }
 
-    fun openSettings(settingType: String): Boolean {
-        val action = when (settingType.lowercase().trim()) {
+    fun getSettingsAction(settingType: String): String {
+        return when (settingType.lowercase().trim()) {
             "wifi", "wi-fi" -> Settings.ACTION_WIFI_SETTINGS
             "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
             "sound", "volume", "audio" -> Settings.ACTION_SOUND_SETTINGS
             "battery", "power" -> Settings.ACTION_BATTERY_SAVER_SETTINGS
             "display", "brightness" -> Settings.ACTION_DISPLAY_SETTINGS
             "location" -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
-            "app", "details" -> Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "app", "apps", "details", "applications" -> Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             else -> Settings.ACTION_SETTINGS
         }
+    }
 
-        val intent = Intent(action).apply {
+    fun getSettingsIntent(settingType: String): Intent {
+        val action = getSettingsAction(settingType)
+        return Intent(action).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (action == Settings.ACTION_APPLICATION_DETAILS_SETTINGS) {
                 data = Uri.fromParts("package", context.packageName, null)
             }
         }
+    }
 
+    fun openSettings(settingType: String): Boolean {
         return try {
+            val intent = getSettingsIntent(settingType)
             context.startActivity(intent)
             true
         } catch (e: Exception) {

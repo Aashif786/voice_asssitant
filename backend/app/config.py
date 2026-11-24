@@ -16,12 +16,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # writable data directory in any environment (containers, CI, read-only installs).
 DATA_DIR = _env_dir("VA_DATA_DIR", BASE_DIR / "data")
 MODELS_DIR = _env_dir("VA_MODELS_DIR", DATA_DIR / "models")
+SEARCH_ROOT = _env_dir("VA_SEARCH_ROOT", DATA_DIR)
 
 _db_env = os.getenv("VA_DB_PATH")
 DB_PATH = Path(_db_env).expanduser().resolve() if _db_env else (DATA_DIR / "assistant.db")
 
-HOST = os.getenv("HOST", "0.0.0.0")
+HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))
+
+# Optional API key authentication. Empty => disabled.
+API_KEY = os.getenv("VA_API_KEY", "").strip()
 
 # Optional cloud fallbacks. Empty => disabled (app stays fully offline/on-device).
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

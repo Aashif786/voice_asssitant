@@ -16,7 +16,7 @@ async def generate_chat(req: ChatRequest):
         reply_text, tool_call = await ai_engine.generate_response(
             text=req.text,
             history=req.history,
-            temperature=req.temperature or 0.7,
+            temperature=req.temperature if req.temperature is not None else 0.7,
             model_name=req.model
         )
         return ChatResponse(

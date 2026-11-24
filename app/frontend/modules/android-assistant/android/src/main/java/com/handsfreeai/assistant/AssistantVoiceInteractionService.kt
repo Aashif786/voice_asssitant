@@ -1,4 +1,4 @@
-package com.emergent.handsfreeai.assistant
+package com.handsfreeai.assistant
 
 import android.app.assist.AssistContent
 import android.app.assist.AssistStructure

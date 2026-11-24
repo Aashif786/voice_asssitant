@@ -30,7 +30,7 @@ export default function ConversationScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { settings } = useSettings();
-  const { id, q } = useLocalSearchParams<{ id: string; q?: string }>();
+  const { id, q, fromVoice } = useLocalSearchParams<{ id: string; q?: string; fromVoice?: string }>();
   const c = useConversation(id === "new" ? null : id);
   const [text, setText] = useState("");
   const listRef = useRef<FlatList>(null);
@@ -39,7 +39,7 @@ export default function ConversationScreen() {
 
   const handleVoiceCommit = useCallback((spokenText: string) => {
     if (spokenText.trim()) {
-      c.send(spokenText.trim());
+      c.send(spokenText.trim(), { isVoice: true });
     }
   }, [c]);
 
@@ -49,15 +49,15 @@ export default function ConversationScreen() {
   useEffect(() => {
     if (q && !sentInitial.current && !c.loading) {
       sentInitial.current = true;
-      c.send(q);
+      c.send(q, { isVoice: fromVoice === "1" });
     }
-  }, [q, c]);
+  }, [q, fromVoice, c]);
 
   const submit = () => {
     const t = text.trim();
     if (t) {
       setText("");
-      c.send(t);
+      c.send(t, { isVoice: false });
     }
   };
 
@@ -65,7 +65,7 @@ export default function ConversationScreen() {
     if (voice.status === "listening") {
       const spoken = await voice.stop();
       if (spoken.trim()) {
-        c.send(spoken.trim());
+        c.send(spoken.trim(), { isVoice: true });
       }
     } else {
       await voice.start();

@@ -36,8 +36,11 @@ export default function SettingsScreen() {
 
   return (
     <View style={s.root}>
-      <ScrollView contentContainerStyle={[s.content, { paddingTop: insets.top + 16, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + 24 }]}>
-        <Text style={s.title}>Settings</Text>
+      <ScrollView contentContainerStyle={[s.content, { paddingTop: insets.top + 12, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + 24 }]}>
+        <View style={s.headerRow}>
+          <View style={{ width: 48 }} />
+          <Text style={s.title}>Settings</Text>
+        </View>
 
         {/* ── Voice & Listening ── */}
         <Section title="Voice & Listening" footer="Foreground service with persistent microphone notification keeps wake-word listening compliant and active in background.">
@@ -296,7 +299,8 @@ export default function SettingsScreen() {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   content: { paddingHorizontal: 20 },
-  title: { color: c.onSurface, fontSize: 30, fontWeight: "700", letterSpacing: -0.8, marginBottom: 20 },
+  headerRow: { flexDirection: "row", alignItems: "center", marginBottom: 20 },
+  title: { color: c.onSurface, fontSize: 30, fontWeight: "700", letterSpacing: -0.8 },
   sheetText: { color: c.onSurfaceTertiary, fontSize: 15, lineHeight: 22 },
   input: { height: 52, borderRadius: 14, backgroundColor: c.surfaceTertiary, color: c.onSurface, paddingHorizontal: 16, fontSize: 16, borderWidth: 1, borderColor: c.border },
 }));

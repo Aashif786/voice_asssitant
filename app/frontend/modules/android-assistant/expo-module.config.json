@@ -2,7 +2,7 @@
   "platforms": ["android"],
   "android": {
     "modules": [
-      "com.emergent.handsfreeai.assistant.AndroidAssistantModule"
+      "com.handsfreeai.assistant.AndroidAssistantModule"
     ]
   }
 }

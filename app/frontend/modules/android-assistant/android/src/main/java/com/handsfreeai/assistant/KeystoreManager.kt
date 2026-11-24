@@ -1,4 +1,4 @@
-package com.emergent.handsfreeai.assistant
+package com.handsfreeai.assistant
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
@@ -13,7 +13,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class KeystoreManager(private val context: Context) {
+open class KeystoreManager(private val context: Context) {
 
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -23,8 +23,10 @@ class KeystoreManager(private val context: Context) {
         private const val GCM_TAG_LENGTH = 128
     }
 
-    private val keyStore: KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply {
-        load(null)
+    private val keyStore: KeyStore by lazy {
+        KeyStore.getInstance(ANDROID_KEYSTORE).apply {
+            load(null)
+        }
     }
 
     private fun getOrCreateSecretKey(): SecretKey {
@@ -56,7 +58,7 @@ class KeystoreManager(private val context: Context) {
     /**
      * Encrypts and writes float embedding vector to private storage.
      */
-    fun saveVoiceProfile(embedding: FloatArray): Boolean {
+    open fun saveVoiceProfile(embedding: FloatArray): Boolean {
         return try {
             val secretKey = getOrCreateSecretKey()
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -87,7 +89,7 @@ class KeystoreManager(private val context: Context) {
     /**
      * Reads and decrypts stored embedding vector.
      */
-    fun loadVoiceProfile(): FloatArray? {
+    open fun loadVoiceProfile(): FloatArray? {
         val file = File(context.filesDir, PROFILE_FILE_NAME)
         if (!file.exists() || file.length() <= GCM_IV_LENGTH) {
             return null
@@ -116,12 +118,12 @@ class KeystoreManager(private val context: Context) {
         }
     }
 
-    fun isProfileEnrolled(): Boolean {
+    open fun isProfileEnrolled(): Boolean {
         val file = File(context.filesDir, PROFILE_FILE_NAME)
         return file.exists() && file.length() > GCM_IV_LENGTH && keyStore.containsAlias(KEY_ALIAS)
     }
 
-    fun deleteVoiceProfile(): Boolean {
+    open fun deleteVoiceProfile(): Boolean {
         return try {
             val file = File(context.filesDir, PROFILE_FILE_NAME)
             if (file.exists()) {

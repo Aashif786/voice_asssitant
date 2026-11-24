@@ -388,6 +388,13 @@ export const AndroidAssistant = {
     return "stopped";
   },
 
+  onWakeWordDetected(callback: (event: { phrase: string; timestamp: number; score?: number }) => void): Subscription | null {
+    if (eventEmitter) {
+      return (eventEmitter as any).addListener("onWakeWordDetected", callback);
+    }
+    return null;
+  },
+
   async startWakeWord(phrase: string, sensitivity: string): Promise<WakeWordResult> {
     if (this.isAvailable()) {
       return await nativeModule.startWakeWord(phrase, sensitivity);

@@ -1,7 +1,8 @@
 import { APP_VERSION } from "@/src/constants/capabilities";
 import { Icon } from "@/src/components/common/Icon";
+import { useTheme, makeStyles } from "@/src/theme";
 import { usePathname, useRouter } from "expo-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import {
   Animated,
   Modal,
@@ -18,18 +19,6 @@ interface SidebarProps {
 }
 
 const SIDEBAR_WIDTH = 280;
-
-const COLORS = {
-  surface: "#05070B",
-  surfaceSecondary: "#0D1117",
-  accent: "#5CE1FF",
-  brandPrimary: "#3D8BFF",
-  onSurface: "#F2F5F9",
-  border: "#1A2029",
-  muted: "#6A7482",
-  divider: "#141922",
-  accentBg: "rgba(92, 225, 255, 0.10)",
-};
 
 interface NavItem {
   label: string;
@@ -60,8 +49,12 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const pathname = usePathname();
-  const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
-  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const { colors } = useTheme();
+  const s = useStyles();
+
+  // Initialize Animated values via useState factory to avoid accessing ref.current during render (React 19 / ESLint compliant)
+  const [slideAnim] = useState(() => new Animated.Value(-SIDEBAR_WIDTH));
+  const [backdropOpacity] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     if (visible) {
@@ -115,7 +108,7 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
     >
       {/* Backdrop */}
       <Animated.View
-        style={[styles.backdrop, { opacity: backdropOpacity }]}
+        style={[s.backdrop, { opacity: backdropOpacity }]}
         pointerEvents={visible ? "auto" : "none"}
       >
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
@@ -124,7 +117,7 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
       {/* Sidebar panel */}
       <Animated.View
         style={[
-          styles.sidebar,
+          s.sidebar,
           {
             paddingTop: insets.top + 16,
             paddingBottom: insets.bottom + 16,
@@ -133,32 +126,32 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
         ]}
       >
         {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.logoRow}>
-            <Icon name="sparkles" size={28} color={COLORS.accent} />
-            <Text style={styles.appName}>Aria</Text>
+        <View style={s.header}>
+          <View style={s.logoRow}>
+            <Icon name="sparkles" size={28} color={colors.accent} />
+            <Text style={s.appName}>Aria</Text>
           </View>
-          <Text style={styles.versionSmall}>v{APP_VERSION}</Text>
+          <Text style={s.versionSmall}>v{APP_VERSION}</Text>
         </View>
 
         {/* Main nav items */}
-        <View style={styles.navSection}>
+        <View style={s.navSection}>
           {NAV_ITEMS.map((item) => {
             const active = isActive(item.route);
             return (
               <Pressable
                 key={item.route}
                 onPress={() => navigate(item.route)}
-                style={[styles.navItem, active && styles.navItemActive]}
-                android_ripple={{ color: "rgba(92,225,255,0.12)" }}
+                style={[s.navItem, active && s.navItemActive]}
+                android_ripple={{ color: colors.surfaceTertiary }}
               >
                 <Icon
                   name={item.icon as any}
                   size={22}
-                  color={active ? COLORS.accent : COLORS.muted}
+                  color={active ? colors.accent : colors.muted}
                 />
                 <Text
-                  style={[styles.navLabel, active && styles.navLabelActive]}
+                  style={[s.navLabel, active && s.navLabelActive]}
                 >
                   {item.label}
                 </Text>
@@ -168,26 +161,26 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
         </View>
 
         {/* Divider */}
-        <View style={styles.divider} />
+        <View style={s.divider} />
 
         {/* Bottom nav items */}
-        <View style={styles.navSection}>
+        <View style={s.navSection}>
           {BOTTOM_ITEMS.map((item) => {
             const active = isActive(item.route);
             return (
               <Pressable
                 key={item.route}
                 onPress={() => navigate(item.route)}
-                style={[styles.navItem, active && styles.navItemActive]}
-                android_ripple={{ color: "rgba(92,225,255,0.12)" }}
+                style={[s.navItem, active && s.navItemActive]}
+                android_ripple={{ color: colors.surfaceTertiary }}
               >
                 <Icon
                   name={item.icon as any}
                   size={22}
-                  color={active ? COLORS.accent : COLORS.muted}
+                  color={active ? colors.accent : colors.muted}
                 />
                 <Text
-                  style={[styles.navLabel, active && styles.navLabelActive]}
+                  style={[s.navLabel, active && s.navLabelActive]}
                 >
                   {item.label}
                 </Text>
@@ -197,15 +190,15 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
         </View>
 
         {/* Footer version */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>Aria · v{APP_VERSION}</Text>
+        <View style={s.footer}>
+          <Text style={s.footerText}>Aria · v{APP_VERSION}</Text>
         </View>
       </Animated.View>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((c) => ({
   backdrop: {
     position: "absolute",
     top: 0,
@@ -220,16 +213,16 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     width: SIDEBAR_WIDTH,
-    backgroundColor: COLORS.surface,
+    backgroundColor: c.surface,
     borderRightWidth: 1,
-    borderRightColor: COLORS.border,
+    borderRightColor: c.border,
     flexDirection: "column",
   },
   header: {
     paddingHorizontal: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: c.border,
     marginBottom: 8,
   },
   logoRow: {
@@ -239,13 +232,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   appName: {
-    color: COLORS.onSurface,
+    color: c.onSurface,
     fontSize: 20,
     fontWeight: "700",
     letterSpacing: -0.4,
   },
   versionSmall: {
-    color: COLORS.muted,
+    color: c.muted,
     fontSize: 12,
     marginTop: 2,
   },
@@ -263,19 +256,20 @@ const styles = StyleSheet.create({
     marginVertical: 1,
   },
   navItemActive: {
-    backgroundColor: COLORS.accentBg,
+    backgroundColor: c.surfaceTertiary,
   },
   navLabel: {
-    color: COLORS.muted,
+    color: c.muted,
     fontSize: 15,
     fontWeight: "500",
   },
   navLabelActive: {
-    color: COLORS.accent,
+    color: c.accent,
+    fontWeight: "600",
   },
   divider: {
     height: 1,
-    backgroundColor: COLORS.divider,
+    backgroundColor: c.divider,
     marginHorizontal: 20,
     marginVertical: 8,
   },
@@ -285,7 +279,7 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
   footerText: {
-    color: COLORS.muted,
+    color: c.muted,
     fontSize: 12,
   },
-});
+}));

@@ -4,17 +4,39 @@ import { Platform } from "react-native";
 
 import { LiveAudioStream } from "@/src/services/native";
 
+export type AudioFormat = "pcm16" | "m4a" | "webm" | "unknown";
+
 export interface AudioCaptureResult {
   base64Audio: string;
   durationSec: number;
   uri?: string;
+  format: AudioFormat;
+  isRawPcm: boolean;
 }
+
+type CaptureEngine = "live_pcm" | "expo_audio" | "web_media" | null;
 
 class RealVoiceCaptureServiceImpl {
   private isRecording = false;
   private recorder: any = null;
   private pcmChunks: Buffer[] = [];
   private startTime = 0;
+  private liveListenerAttached = false;
+  private activeEngine: CaptureEngine = null;
+
+  /**
+   * Ensures the LiveAudioStream 'data' event listener is registered exactly once
+   * to prevent duplicate chunk ingestion across consecutive recording sessions.
+   */
+  private ensureLiveAudioListener() {
+    if (this.liveListenerAttached || !LiveAudioStream) return;
+    this.liveListenerAttached = true;
+    LiveAudioStream.on("data", (b64: string) => {
+      if (this.isRecording && this.activeEngine === "live_pcm") {
+        this.pcmChunks.push(Buffer.from(b64, "base64"));
+      }
+    });
+  }
 
   async start(): Promise<{ ok: boolean; reason?: string }> {
     if (this.isRecording) {
@@ -23,8 +45,9 @@ class RealVoiceCaptureServiceImpl {
     this.isRecording = true;
     this.pcmChunks = [];
     this.startTime = Date.now();
+    this.activeEngine = null;
 
-    // 1. LiveAudioStream (Raw 16kHz PCM stream via @fugood/react-native-audio-pcm-stream)
+    // 1. LiveAudioStream (Raw 16kHz 16-bit mono PCM stream via @fugood/react-native-audio-pcm-stream)
     if (LiveAudioStream) {
       try {
         LiveAudioStream.init({
@@ -35,11 +58,8 @@ class RealVoiceCaptureServiceImpl {
           bufferSize: 4096,
           wavFile: "",
         });
-        LiveAudioStream.on("data", (b64: string) => {
-          if (this.isRecording) {
-            this.pcmChunks.push(Buffer.from(b64, "base64"));
-          }
-        });
+        this.ensureLiveAudioListener();
+        this.activeEngine = "live_pcm";
         LiveAudioStream.start();
         return { ok: true };
       } catch (e: any) {
@@ -47,7 +67,7 @@ class RealVoiceCaptureServiceImpl {
       }
     }
 
-    // 2. expo-audio (AudioModule.AudioRecorder)
+    // 2. expo-audio (AudioModule.AudioRecorder fallback -> outputs compressed .m4a container)
     if (Platform.OS !== "web") {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -56,14 +76,16 @@ class RealVoiceCaptureServiceImpl {
         await recorder.prepareToRecordAsync();
         recorder.record();
         this.recorder = recorder;
+        this.activeEngine = "expo_audio";
         return { ok: true };
       } catch (e: any) {
         this.isRecording = false;
+        this.activeEngine = null;
         return { ok: false, reason: e?.message || "Failed to start microphone recording." };
       }
     }
 
-    // 3. Web MediaRecorder
+    // 3. Web MediaRecorder fallback -> outputs compressed audio/webm container
     if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.mediaDevices) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -79,14 +101,17 @@ class RealVoiceCaptureServiceImpl {
           stream,
           webChunks,
         };
+        this.activeEngine = "web_media";
         return { ok: true };
       } catch (e: any) {
         this.isRecording = false;
+        this.activeEngine = null;
         return { ok: false, reason: e?.message || "Web microphone access failed." };
       }
     }
 
     this.isRecording = false;
+    this.activeEngine = null;
     return { ok: false, reason: "No supported audio recording engine available." };
   }
 
@@ -94,9 +119,11 @@ class RealVoiceCaptureServiceImpl {
     if (!this.isRecording) return null;
     this.isRecording = false;
     const durationSec = Math.max(0.5, (Date.now() - this.startTime) / 1000);
+    const engine = this.activeEngine;
+    this.activeEngine = null;
 
-    // 1. LiveAudioStream stop
-    if (LiveAudioStream && this.pcmChunks.length > 0) {
+    // 1. LiveAudioStream stop (Raw 16 kHz 16-bit mono PCM)
+    if (engine === "live_pcm" && LiveAudioStream) {
       try {
         await LiveAudioStream.stop();
       } catch {}
@@ -105,10 +132,12 @@ class RealVoiceCaptureServiceImpl {
       return {
         base64Audio: combined.toString("base64"),
         durationSec,
+        format: "pcm16",
+        isRawPcm: true,
       };
     }
 
-    // 2. expo-audio recorder stop
+    // 2. expo-audio recorder stop (Compressed .m4a fallback container)
     if (this.recorder && typeof this.recorder.stop === "function") {
       try {
         await this.recorder.stop();
@@ -121,6 +150,8 @@ class RealVoiceCaptureServiceImpl {
             base64Audio: base64,
             durationSec,
             uri,
+            format: "m4a",
+            isRawPcm: false,
           };
         }
       } catch (e) {
@@ -130,7 +161,7 @@ class RealVoiceCaptureServiceImpl {
       }
     }
 
-    // 3. Web MediaRecorder stop
+    // 3. Web MediaRecorder stop (Compressed audio/webm fallback container)
     if (this.recorder?.mr) {
       return new Promise<AudioCaptureResult | null>((resolve) => {
         const { mr, stream, webChunks } = this.recorder;
@@ -143,6 +174,8 @@ class RealVoiceCaptureServiceImpl {
             resolve({
               base64Audio: base64,
               durationSec,
+              format: "webm",
+              isRawPcm: false,
             });
           } catch {
             resolve(null);
@@ -158,6 +191,7 @@ class RealVoiceCaptureServiceImpl {
 
   async cancel(): Promise<void> {
     this.isRecording = false;
+    this.activeEngine = null;
     this.pcmChunks = [];
     if (LiveAudioStream) {
       try {
